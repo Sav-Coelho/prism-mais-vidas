@@ -43,7 +43,20 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
 
-      <main className="main">{children}</main>
+      <main className="main">
+        {children}
+        <footer style={{
+          marginTop: 48,
+          paddingTop: 16,
+          borderTop: '1px solid #e0e0e0',
+          textAlign: 'center',
+          fontSize: 11,
+          color: 'var(--brave-gray)',
+          letterSpacing: '0.03em',
+        }}>
+          Desenvolvido por Delfos Research LTDA — Uso Restrito
+        </footer>
+      </main>
     </>
   )
 }
