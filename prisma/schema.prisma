@@ -1,0 +1,100 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Unit {
+  id           Int           @id @default(autoincrement())
+  name         String        @unique
+  bankAccounts BankAccount[]
+  transactions Transaction[]
+  clients      Client[]
+  sales        Sale[]
+}
+
+model BankAccount {
+  id               Int               @id @default(autoincrement())
+  name             String
+  unitId           Int
+  unit             Unit              @relation(fields: [unitId], references: [id])
+  initialBalance   Float             @default(0)
+  ofxBankId        String?
+  ofxAcctId        String?
+  transactions     Transaction[]
+  balanceSnapshots BalanceSnapshot[]
+}
+
+model Account {
+  id           Int           @id @default(autoincrement())
+  code         String        @unique
+  name         String
+  type         String
+  dreGroup     String
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  transactions Transaction[]
+}
+
+model Transaction {
+  id            Int          @id @default(autoincrement())
+  date          DateTime
+  description   String
+  amount        Float
+  memo          String?
+  fitid         String?      @unique
+  accountId     Int?
+  account       Account?     @relation(fields: [accountId], references: [id])
+  unitId        Int?
+  unit          Unit?        @relation(fields: [unitId], references: [id])
+  bankAccountId           Int?
+  bankAccount             BankAccount? @relation(fields: [bankAccountId], references: [id])
+  transferToUnitId        Int?
+  transferToBankAccountId Int?
+  month                   Int
+  year                    Int
+  createdAt               DateTime     @default(now())
+}
+
+model BalanceSnapshot {
+  id            Int         @id @default(autoincrement())
+  bankAccountId Int
+  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id])
+  date          DateTime
+  balance       Float
+  createdAt     DateTime    @default(now())
+
+  @@unique([bankAccountId, date])
+}
+
+model Client {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String?
+  phone     String?
+  cpf       String?
+  unitId    Int?
+  unit      Unit?    @relation(fields: [unitId], references: [id])
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  sales     Sale[]
+}
+
+model Sale {
+  id          Int      @id @default(autoincrement())
+  clientId    Int
+  client      Client   @relation(fields: [clientId], references: [id])
+  description String
+  amount      Float
+  date        DateTime
+  unitId      Int?
+  unit        Unit?    @relation(fields: [unitId], references: [id])
+  month       Int
+  year        Int
+  createdAt   DateTime @default(now())
+}
