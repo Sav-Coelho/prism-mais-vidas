@@ -10,12 +10,13 @@ datasource db {
 }
 
 model Unit {
-  id           Int           @id @default(autoincrement())
-  name         String        @unique
-  bankAccounts BankAccount[]
-  transactions Transaction[]
-  clients      Client[]
-  sales        Sale[]
+  id             Int             @id @default(autoincrement())
+  name           String          @unique
+  bankAccounts   BankAccount[]
+  transactions   Transaction[]
+  clients        Client[]
+  sales          Sale[]
+  purchaseOrders PurchaseOrder[]
 }
 
 model BankAccount {
@@ -97,4 +98,47 @@ model Sale {
   month       Int
   year        Int
   createdAt   DateTime @default(now())
+}
+
+model Supplier {
+  id              Int             @id @default(autoincrement())
+  name            String
+  cnpj            String?
+  contactName     String?
+  email           String?
+  phone           String?
+  paymentTermDays Int             @default(30)
+  notes           String?
+  active          Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  purchaseOrders  PurchaseOrder[]
+}
+
+model PurchaseOrder {
+  id           Int            @id @default(autoincrement())
+  supplierId   Int
+  supplier     Supplier       @relation(fields: [supplierId], references: [id])
+  unitId       Int?
+  unit         Unit?          @relation(fields: [unitId], references: [id])
+  status       String         @default("DRAFT")
+  expectedDate DateTime?
+  receivedDate DateTime?
+  totalAmount  Float          @default(0)
+  notes        String?
+  month        Int
+  year         Int
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  items        PurchaseItem[]
+}
+
+model PurchaseItem {
+  id          Int           @id @default(autoincrement())
+  orderId     Int
+  order       PurchaseOrder @relation(fields: [orderId], references: [id])
+  description String
+  quantity    Float
+  unitPrice   Float
+  receivedQty Float         @default(0)
+  notes       String?
 }
