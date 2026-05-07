@@ -20,7 +20,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     <>
       <header className="topbar">
         <div className="topbar-logo">
-          <span>Prism <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>· Mais Vidas Verticais</span></span>
+          <span>Prism <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>· Tio Chico Shop</span></span>
         </div>
         <div className="topbar-right">
           <span className="topbar-badge">v1.0</span>

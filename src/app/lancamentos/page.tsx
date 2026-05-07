@@ -4,6 +4,7 @@ import Shell from '@/components/Shell'
 import AccountCombobox from '@/components/AccountCombobox'
 import { MONTH_NAMES } from '@/lib/dre'
 import { tokenize, jaccardSimilarity } from '@/lib/classifier'
+import { parseCSV } from '@/lib/csv-parser'
 
 const REALTIME_THRESHOLD = 0.25
 
@@ -13,6 +14,8 @@ const fmt = (v: number) =>
 const fmtDate = (d: string) => new Date(d).toLocaleDateString('pt-BR')
 
 const now = new Date()
+
+type Tab = 'ofx' | 'cartao' | 'manual'
 
 interface PreviewTx {
   fitid: string
@@ -55,7 +58,14 @@ export default function Lancamentos() {
   const [filter, setFilter] = useState<'all' | 'sem-conta' | 'classificado'>('all')
   const [selectedTxIds, setSelectedTxIds] = useState<Set<number>>(new Set())
   const fileRef = useRef<HTMLInputElement>(null)
+  const csvFileRef = useRef<HTMLInputElement>(null)
 
+  // Tab
+  const [tab, setTab] = useState<Tab>('ofx')
+  const [previewSource, setPreviewSource] = useState<'ofx' | 'csv'>('ofx')
+  const [invertSign, setInvertSign] = useState(true)
+
+  // Preview state (shared between OFX and CSV)
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [previewTxs, setPreviewTxs] = useState<PreviewTx[] | null>(null)
@@ -74,6 +84,16 @@ export default function Lancamentos() {
   const [panelMinimized, setPanelMinimized] = useState(false)
   const panelDragging = useRef(false)
   const panelDragOffset = useRef({ x: 0, y: 0 })
+
+  // Manual entry state
+  const [manualDate, setManualDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [manualDesc, setManualDesc] = useState('')
+  const [manualAmount, setManualAmount] = useState('')
+  const [manualIsExpense, setManualIsExpense] = useState(true)
+  const [manualUnitId, setManualUnitId] = useState('')
+  const [manualBankAccountId, setManualBankAccountId] = useState('')
+  const [manualAccountId, setManualAccountId] = useState('')
+  const [manualSaving, setManualSaving] = useState(false)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
 
@@ -97,6 +117,38 @@ export default function Lancamentos() {
 
   useEffect(() => { load() }, [month, year, unitId])
 
+  const runClassifier = (txList: PreviewTx[]) => {
+    const toSuggest = txList.filter(t => !t.alreadyImported && !t.isBalance)
+    if (toSuggest.length === 0) return
+    setSuggesting(true)
+    fetch('/api/classify/suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memos: toSuggest.map(t => ({ fitid: t.fitid, memo: t.memo })) }),
+    })
+      .then(r => r.json())
+      .then((suggestions: { fitid: string; accountId: number; accountName: string; accountCode: string; confidence: number }[]) => {
+        if (suggestions.length > 0) {
+          setPendingSuggestions(suggestions)
+          setPanelMinimized(false)
+          setPanelPos({ x: Math.max(16, window.innerWidth / 2 - 190), y: Math.max(16, window.innerHeight / 2 - 180) })
+        }
+      })
+      .catch(() => {})
+      .finally(() => setSuggesting(false))
+  }
+
+  const resetPreview = () => {
+    setPreviewTxs(null)
+    setSelectedFitids(new Set())
+    setPreviewAccountMap({})
+    setPreviewTransferDestMap({})
+    setSuggestedFitids(new Set())
+    setMatchedBankAccount(null)
+    setDetectedBankInfo(null)
+    setLedgerBalance(null)
+  }
+
   const parseOFX = async (file: File) => {
     setParsing(true)
     const fd = new FormData()
@@ -106,6 +158,7 @@ export default function Lancamentos() {
     if (res.ok) {
       const txList: PreviewTx[] = data.transactions
       setPreviewTxs(txList)
+      setPreviewSource('ofx')
       setSelectedFitids(new Set(
         txList.filter((t: PreviewTx) => !t.alreadyImported && !t.isBalance).map((t: PreviewTx) => t.fitid)
       ))
@@ -124,28 +177,53 @@ export default function Lancamentos() {
         setPreviewBankAccountId('')
       }
 
-      // Busca sugestões históricas (não-bloqueante)
-      const toSuggest = txList.filter(t => !t.alreadyImported && !t.isBalance)
-      if (toSuggest.length > 0) {
-        setSuggesting(true)
-        fetch('/api/classify/suggest', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ memos: toSuggest.map(t => ({ fitid: t.fitid, memo: t.memo })) }),
-        })
-          .then(r => r.json())
-          .then((suggestions: { fitid: string; accountId: number; accountName: string; accountCode: string; confidence: number }[]) => {
-            if (suggestions.length > 0) {
-              setPendingSuggestions(suggestions)
-              setPanelMinimized(false)
-              setPanelPos({ x: Math.max(16, window.innerWidth / 2 - 190), y: Math.max(16, window.innerHeight / 2 - 180) })
-            }
-          })
-          .catch(() => {})
-          .finally(() => setSuggesting(false))
-      }
+      runClassifier(txList)
     } else {
       showToast(`Erro: ${data.error}`)
+    }
+    setParsing(false)
+  }
+
+  const parseCSVFile = async (file: File) => {
+    setParsing(true)
+    try {
+      const text = await file.text()
+      const result = parseCSV(text, file.name, invertSign)
+
+      if (result.errors.length > 0 && result.transactions.length === 0) {
+        showToast(`Erro ao ler CSV: ${result.errors[0]}`)
+        setParsing(false)
+        return
+      }
+
+      if (result.errors.length > 0) {
+        showToast(`⚠ ${result.errors.length} linhas ignoradas. ${result.transactions.length} transações encontradas.`)
+      }
+
+      const txList: PreviewTx[] = result.transactions.map(t => ({
+        fitid: t.fitid,
+        date: t.date.toISOString(),
+        amount: t.amount,
+        memo: t.memo,
+        alreadyImported: false,
+        isBalance: false,
+      }))
+
+      setPreviewTxs(txList)
+      setPreviewSource('csv')
+      setSelectedFitids(new Set(txList.map(t => t.fitid)))
+      setPreviewAccountMap({})
+      setPreviewTransferDestMap({})
+      setSuggestedFitids(new Set())
+      setDetectedBankInfo(null)
+      setMatchedBankAccount(null)
+      setLedgerBalance(null)
+      setPreviewUnitId(unitId)
+      setPreviewBankAccountId('')
+
+      runClassifier(txList)
+    } catch {
+      showToast('Erro ao processar arquivo CSV')
     }
     setParsing(false)
   }
@@ -227,16 +305,24 @@ export default function Lancamentos() {
     document.addEventListener('mouseup', onUp)
   }
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleOFXFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (f) parseOFX(f)
     e.target.value = ''
   }
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleCSVFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (f) parseCSVFile(f)
+    e.target.value = ''
+  }
+
+  const handleDrop = (e: React.DragEvent, source: 'ofx' | 'csv') => {
     e.preventDefault(); setDrag(false)
     const f = e.dataTransfer.files?.[0]
-    if (f) parseOFX(f)
+    if (!f) return
+    if (source === 'csv') parseCSVFile(f)
+    else parseOFX(f)
   }
 
   const toggleSelect = (fitid: string) => {
@@ -289,15 +375,48 @@ export default function Lancamentos() {
     if (res.ok) {
       const saldoMsg = ledgerBalance ? ` · Saldo ${fmt(ledgerBalance.amount)} salvo` : ''
       showToast(`✓ ${data.imported} importadas${data.skipped ? `, ${data.skipped} ignoradas` : ''}${saldoMsg}`)
-      setPreviewTxs(null); setSelectedFitids(new Set()); setPreviewAccountMap({})
-      setPreviewTransferDestMap({})
-      setSuggestedFitids(new Set())
-      setMatchedBankAccount(null); setDetectedBankInfo(null); setLedgerBalance(null)
+      resetPreview()
       load()
     } else {
       showToast(`Erro: ${data.error}`)
     }
     setSaving(false)
+  }
+
+  const saveManual = async () => {
+    if (!manualDate || !manualDesc.trim() || !manualAmount || !manualUnitId) {
+      showToast('Preencha data, descrição, valor e unidade')
+      return
+    }
+    const rawAmt = parseFloat(manualAmount.replace(',', '.'))
+    if (isNaN(rawAmt) || rawAmt === 0) { showToast('Valor inválido'); return }
+
+    setManualSaving(true)
+    const amount = manualIsExpense ? -Math.abs(rawAmt) : Math.abs(rawAmt)
+    const res = await fetch('/api/transactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: manualDate,
+        description: manualDesc.trim(),
+        memo: manualDesc.trim(),
+        amount,
+        accountId: manualAccountId || null,
+        unitId: manualUnitId,
+        bankAccountId: manualBankAccountId || null,
+      })
+    })
+    if (res.ok) {
+      showToast('✓ Lançamento salvo')
+      setManualDesc('')
+      setManualAmount('')
+      setManualAccountId('')
+      load()
+    } else {
+      const data = await res.json()
+      showToast(`Erro: ${data.error || 'desconhecido'}`)
+    }
+    setManualSaving(false)
   }
 
   const classify = async (txId: number, accountId: string) => {
@@ -346,19 +465,33 @@ export default function Lancamentos() {
   const classificado = transactions.filter(t => !!t.accountId).length
   const selectableCount = previewTxs?.filter(t => !t.alreadyImported && !t.isBalance).length ?? 0
 
-  const bankAccountsForUnit = units.find(u => String(u.id) === previewUnitId)?.bankAccounts ?? []
+  const bankAccountsForUnit = units.find((u: any) => String(u.id) === previewUnitId)?.bankAccounts ?? []
+  const manualBankAccounts = units.find((u: any) => String(u.id) === manualUnitId)?.bankAccounts ?? []
+
+  const TAB_STYLE = (active: boolean): React.CSSProperties => ({
+    padding: '8px 18px',
+    border: 'none',
+    borderBottom: active ? '3px solid var(--brave-yellow)' : '3px solid transparent',
+    background: 'none',
+    fontFamily: 'var(--font-sub)',
+    fontWeight: active ? 700 : 500,
+    fontSize: 13,
+    color: active ? 'var(--brave-dark)' : 'var(--brave-gray)',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap' as const,
+  })
 
   return (
     <Shell>
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">Lançamentos</h1>
-          <p className="page-subtitle">Importe extratos OFX e classifique cada transação</p>
+          <p className="page-subtitle">Importe extratos, faturas de cartão e lançamentos manuais</p>
         </div>
         <div className="flex gap-2">
           <select className="form-select" style={{ width: 150 }} value={unitId} onChange={e => setUnitId(e.target.value)}>
             <option value="">Todas as unidades</option>
-            {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            {units.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
           <select className="form-select" style={{ width: 120 }} value={month} onChange={e => setMonth(+e.target.value)}>
             {MONTH_NAMES.slice(1).map((m, i) => (
@@ -371,27 +504,186 @@ export default function Lancamentos() {
         </div>
       </div>
 
+      {/* Tab navigation */}
       {!previewTxs && (
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--brave-light)', marginBottom: 20 }}>
+          <button style={TAB_STYLE(tab === 'ofx')} onClick={() => setTab('ofx')}>
+            📂 Extrato OFX
+          </button>
+          <button style={TAB_STYLE(tab === 'cartao')} onClick={() => setTab('cartao')}>
+            💳 Fatura Cartão de Crédito
+          </button>
+          <button style={TAB_STYLE(tab === 'manual')} onClick={() => setTab('manual')}>
+            ✏️ Lançamento Manual
+          </button>
+        </div>
+      )}
+
+      {/* OFX Upload */}
+      {tab === 'ofx' && !previewTxs && (
         <div
           className={`upload-zone mb-6 ${drag ? 'drag' : ''}`}
           onDragOver={e => { e.preventDefault(); setDrag(true) }}
           onDragLeave={() => setDrag(false)}
-          onDrop={handleDrop}
+          onDrop={e => handleDrop(e, 'ofx')}
           onClick={() => fileRef.current?.click()}
         >
-          <input ref={fileRef} type="file" accept=".ofx,.OFX" style={{ display: 'none' }} onChange={handleFile} />
+          <input ref={fileRef} type="file" accept=".ofx,.OFX" style={{ display: 'none' }} onChange={handleOFXFile} />
           <div className="upload-icon">{parsing ? '⏳' : '📂'}</div>
           <div className="upload-title">{parsing ? 'Lendo extrato...' : 'Importar Extrato OFX'}</div>
           <div className="upload-sub">Clique ou arraste o arquivo .OFX — você verá uma prévia antes de salvar</div>
         </div>
       )}
 
+      {/* CSV Credit Card Upload */}
+      {tab === 'cartao' && !previewTxs && (
+        <div className="mb-6">
+          <div className="card mb-3" style={{ padding: '12px 20px', background: '#fffbea', border: '1px solid #f0c040' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#7a5c00' }}>Formatos suportados</div>
+            <div style={{ fontSize: 12, color: '#7a5c00', lineHeight: 1.6 }}>
+              Nubank (CSV com colunas: <code>data, categoria, título, valor</code>) · Formato genérico com colunas de data, descrição e valor em PT-BR ou EN · Separador vírgula ou ponto-e-vírgula
+            </div>
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
+                <input
+                  type="checkbox"
+                  checked={invertSign}
+                  onChange={e => setInvertSign(e.target.checked)}
+                />
+                Inverter sinal dos valores (compras positivas → débitos negativos)
+              </label>
+              <span style={{ fontSize: 11, color: '#a07800' }}>Recomendado para Nubank e maioria dos cartões</span>
+            </div>
+          </div>
+          <div
+            className={`upload-zone ${drag ? 'drag' : ''}`}
+            onDragOver={e => { e.preventDefault(); setDrag(true) }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={e => handleDrop(e, 'csv')}
+            onClick={() => csvFileRef.current?.click()}
+          >
+            <input ref={csvFileRef} type="file" accept=".csv,.CSV,.tsv,.TSV" style={{ display: 'none' }} onChange={handleCSVFile} />
+            <div className="upload-icon">{parsing ? '⏳' : '💳'}</div>
+            <div className="upload-title">{parsing ? 'Lendo fatura...' : 'Importar Fatura do Cartão de Crédito'}</div>
+            <div className="upload-sub">Clique ou arraste o arquivo .CSV da fatura — você verá uma prévia antes de salvar</div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Entry Form */}
+      {tab === 'manual' && !previewTxs && (
+        <div className="card mb-6" style={{ padding: '24px 28px', maxWidth: 680 }}>
+          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 15, marginBottom: 20 }}>
+            Novo Lançamento Manual
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Data *</label>
+              <input
+                type="date"
+                className="form-input"
+                value={manualDate}
+                onChange={e => setManualDate(e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Unidade *</label>
+              <select
+                className="form-select"
+                value={manualUnitId}
+                onChange={e => { setManualUnitId(e.target.value); setManualBankAccountId('') }}
+                style={{ width: '100%' }}
+              >
+                <option value="">— Selecione —</option>
+                {units.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Descrição *</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Ex: Tarifa Mercado Livre — Dez/2025"
+                value={manualDesc}
+                onChange={e => setManualDesc(e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Valor (R$) *</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Ex: 125,90"
+                value={manualAmount}
+                onChange={e => setManualAmount(e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Tipo</label>
+              <div style={{ display: 'flex', gap: 8, height: 38, alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer' }}>
+                  <input type="radio" name="tipo" checked={manualIsExpense} onChange={() => setManualIsExpense(true)} />
+                  <span style={{ color: '#c0392b', fontWeight: 600 }}>Despesa (−)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer' }}>
+                  <input type="radio" name="tipo" checked={!manualIsExpense} onChange={() => setManualIsExpense(false)} />
+                  <span style={{ color: '#1a7a4a', fontWeight: 600 }}>Receita (+)</span>
+                </label>
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Conta Bancária</label>
+              <select
+                className="form-select"
+                value={manualBankAccountId}
+                onChange={e => setManualBankAccountId(e.target.value)}
+                style={{ width: '100%' }}
+                disabled={!manualUnitId}
+              >
+                <option value="">— Selecione —</option>
+                {manualBankAccounts.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Plano de Contas</label>
+              <AccountCombobox
+                accounts={accounts}
+                value={manualAccountId}
+                onChange={val => setManualAccountId(val)}
+              />
+            </div>
+          </div>
+          <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
+            <button
+              className="btn btn-primary"
+              onClick={saveManual}
+              disabled={manualSaving}
+            >
+              {manualSaving ? 'Salvando...' : 'Salvar lançamento'}
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => {
+              setManualDesc(''); setManualAmount(''); setManualAccountId('')
+              setManualUnitId(''); setManualBankAccountId(''); setManualIsExpense(true)
+            }}>
+              Limpar
+            </button>
+          </div>
+          <div style={{ marginTop: 14, padding: '10px 14px', background: '#f4f6fa', borderRadius: 8, fontSize: 12, color: 'var(--brave-gray)' }}>
+            <strong>Dica:</strong> Use esta aba para lançar tarifas de plataformas de e-commerce (Mercado Livre, Shopee, Amazon, etc.) e outros lançamentos pontuais que não aparecem no extrato bancário.
+          </div>
+        </div>
+      )}
+
+      {/* Preview table (shared for OFX and CSV) */}
       {previewTxs && (
         <div className="card mb-6" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--brave-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div>
               <span style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>
-                Prévia do OFX — {previewTxs.length} linhas
+                {previewSource === 'csv' ? '💳 Prévia da Fatura CSV' : '📂 Prévia do OFX'} — {previewTxs.length} linhas
               </span>
               <div style={{ fontSize: 12, color: 'var(--brave-gray)', marginTop: 2 }}>
                 {selectedFitids.size} selecionadas · {previewTxs.filter(t => t.alreadyImported).length} já importadas
@@ -430,7 +722,7 @@ export default function Lancamentos() {
                 onChange={e => { setPreviewUnitId(e.target.value); setPreviewBankAccountId('') }}
               >
                 <option value="">— Selecione a unidade —</option>
-                {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                {units.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
               {previewUnitId && (
                 <select
@@ -467,7 +759,7 @@ export default function Lancamentos() {
               <button className="btn btn-primary" onClick={saveSelected} disabled={saving || selectedFitids.size === 0 || !previewUnitId}>
                 {saving ? 'Salvando...' : `Salvar (${selectedFitids.size})`}
               </button>
-              <button className="btn btn-danger btn-sm" onClick={() => { setPreviewTxs(null); setSelectedFitids(new Set()); setPreviewAccountMap({}); setPreviewTransferDestMap({}); setSuggestedFitids(new Set()); setMatchedBankAccount(null); setDetectedBankInfo(null); setLedgerBalance(null) }}>
+              <button className="btn btn-danger btn-sm" onClick={resetPreview}>
                 Cancelar
               </button>
             </div>
@@ -589,7 +881,7 @@ export default function Lancamentos() {
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--brave-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>
-            {unitId ? units.find(u => u.id === parseInt(unitId))?.name : 'Consolidado'} — {MONTH_NAMES[month]}/{year} — {filtered.length} lançamentos
+            {unitId ? units.find((u: any) => u.id === parseInt(unitId))?.name : 'Consolidado'} — {MONTH_NAMES[month]}/{year} — {filtered.length} lançamentos
           </span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {semConta > 0 && (
@@ -614,7 +906,7 @@ export default function Lancamentos() {
           <div style={{ padding: 60, textAlign: 'center', color: 'var(--brave-gray)' }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>📄</div>
             Nenhum lançamento encontrado.<br />
-            <span style={{ fontSize: 12 }}>Importe um arquivo OFX acima.</span>
+            <span style={{ fontSize: 12 }}>Importe um arquivo OFX, CSV ou use o lançamento manual acima.</span>
           </div>
         ) : (
           <div className="table-wrap">
@@ -674,7 +966,6 @@ export default function Lancamentos() {
           borderRadius: 12, boxShadow: '0 10px 36px rgba(0,0,0,0.22)', background: 'var(--brave-white)',
           border: '1px solid rgba(43,45,66,0.18)', userSelect: 'none',
         }}>
-          {/* Header — drag handle */}
           <div
             onMouseDown={handlePanelDragStart}
             style={{

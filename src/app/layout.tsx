@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Prism · Mais Vidas Verticais',
+  title: 'Prism · Tio Chico Shop',
   description: 'Sistema de Gestão Financeira',
 }
 
