@@ -6,6 +6,8 @@ import { MONTH_NAMES } from '@/lib/dre'
 import { tokenize, jaccardSimilarity } from '@/lib/classifier'
 import { parseCSV } from '@/lib/csv-parser'
 
+const CARD_ACCEPT = '.csv,.CSV,.pdf,.PDF'
+
 const REALTIME_THRESHOLD = 0.25
 
 const fmt = (v: number) =>
@@ -85,6 +87,9 @@ export default function Lancamentos() {
   const panelDragging = useRef(false)
   const panelDragOffset = useRef({ x: 0, y: 0 })
 
+  // PDF card info (shown in preview header)
+  const [pdfCardInfo, setPdfCardInfo] = useState<{ cardNumber: string; invoiceMonth: number; invoiceYear: number } | null>(null)
+
   // Manual entry state
   const [manualDate, setManualDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [manualDesc, setManualDesc] = useState('')
@@ -147,6 +152,7 @@ export default function Lancamentos() {
     setMatchedBankAccount(null)
     setDetectedBankInfo(null)
     setLedgerBalance(null)
+    setPdfCardInfo(null)
   }
 
   const parseOFX = async (file: File) => {
@@ -226,6 +232,52 @@ export default function Lancamentos() {
       showToast('Erro ao processar arquivo CSV')
     }
     setParsing(false)
+  }
+
+  const parsePDFFile = async (file: File) => {
+    setParsing(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/pdf/parse', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) {
+        showToast(`Erro: ${data.error}`)
+        setParsing(false)
+        return
+      }
+
+      if (data.warnings?.length > 0) {
+        showToast(`⚠ ${data.warnings.length} linhas ignoradas. ${data.transactions.length} transações encontradas.`)
+      }
+
+      const txList = data.transactions as PreviewTx[]
+      setPreviewTxs(txList)
+      setPreviewSource('csv')
+      setSelectedFitids(new Set(txList.map((t: PreviewTx) => t.fitid)))
+      setPreviewAccountMap({})
+      setPreviewTransferDestMap({})
+      setSuggestedFitids(new Set())
+      setDetectedBankInfo(null)
+      setMatchedBankAccount(null)
+      setLedgerBalance(null)
+      setPreviewUnitId(unitId)
+      setPreviewBankAccountId('')
+      setPdfCardInfo({ cardNumber: data.cardNumber, invoiceMonth: data.invoiceMonth, invoiceYear: data.invoiceYear })
+
+      runClassifier(txList)
+    } catch {
+      showToast('Erro ao processar o PDF')
+    }
+    setParsing(false)
+  }
+
+  const handleCardFile = (file: File) => {
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      parsePDFFile(file)
+    } else {
+      parseCSVFile(file)
+    }
   }
 
   const handlePreviewAccountChange = (fitid: string, accountId: string) => {
@@ -309,20 +361,6 @@ export default function Lancamentos() {
     const f = e.target.files?.[0]
     if (f) parseOFX(f)
     e.target.value = ''
-  }
-
-  const handleCSVFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    if (f) parseCSVFile(f)
-    e.target.value = ''
-  }
-
-  const handleDrop = (e: React.DragEvent, source: 'ofx' | 'csv') => {
-    e.preventDefault(); setDrag(false)
-    const f = e.dataTransfer.files?.[0]
-    if (!f) return
-    if (source === 'csv') parseCSVFile(f)
-    else parseOFX(f)
   }
 
   const toggleSelect = (fitid: string) => {
@@ -525,7 +563,7 @@ export default function Lancamentos() {
           className={`upload-zone mb-6 ${drag ? 'drag' : ''}`}
           onDragOver={e => { e.preventDefault(); setDrag(true) }}
           onDragLeave={() => setDrag(false)}
-          onDrop={e => handleDrop(e, 'ofx')}
+          onDrop={e => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) parseOFX(f) }}
           onClick={() => fileRef.current?.click()}
         >
           <input ref={fileRef} type="file" accept=".ofx,.OFX" style={{ display: 'none' }} onChange={handleOFXFile} />
@@ -535,13 +573,14 @@ export default function Lancamentos() {
         </div>
       )}
 
-      {/* CSV Credit Card Upload */}
+      {/* Credit Card Upload (PDF Sicoob ou CSV genérico) */}
       {tab === 'cartao' && !previewTxs && (
         <div className="mb-6">
           <div className="card mb-3" style={{ padding: '12px 20px', background: '#fffbea', border: '1px solid #f0c040' }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#7a5c00' }}>Formatos suportados</div>
             <div style={{ fontSize: 12, color: '#7a5c00', lineHeight: 1.6 }}>
-              Nubank (CSV com colunas: <code>data, categoria, título, valor</code>) · Formato genérico com colunas de data, descrição e valor em PT-BR ou EN · Separador vírgula ou ponto-e-vírgula
+              <strong>PDF Sicoob</strong> — extrato gerado pelo portal SiscoobCard (recomendado) ·{' '}
+              <strong>CSV genérico</strong> — colunas de data, descrição e valor (Nubank, etc.)
             </div>
             <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
@@ -550,22 +589,27 @@ export default function Lancamentos() {
                   checked={invertSign}
                   onChange={e => setInvertSign(e.target.checked)}
                 />
-                Inverter sinal dos valores (compras positivas → débitos negativos)
+                Inverter sinal (apenas para CSV — PDF Sicoob inverte automaticamente)
               </label>
-              <span style={{ fontSize: 11, color: '#a07800' }}>Recomendado para Nubank e maioria dos cartões</span>
             </div>
           </div>
           <div
             className={`upload-zone ${drag ? 'drag' : ''}`}
             onDragOver={e => { e.preventDefault(); setDrag(true) }}
             onDragLeave={() => setDrag(false)}
-            onDrop={e => handleDrop(e, 'csv')}
+            onDrop={e => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) handleCardFile(f) }}
             onClick={() => csvFileRef.current?.click()}
           >
-            <input ref={csvFileRef} type="file" accept=".csv,.CSV,.tsv,.TSV" style={{ display: 'none' }} onChange={handleCSVFile} />
+            <input
+              ref={csvFileRef}
+              type="file"
+              accept={CARD_ACCEPT}
+              style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleCardFile(f); e.target.value = '' }}
+            />
             <div className="upload-icon">{parsing ? '⏳' : '💳'}</div>
             <div className="upload-title">{parsing ? 'Lendo fatura...' : 'Importar Fatura do Cartão de Crédito'}</div>
-            <div className="upload-sub">Clique ou arraste o arquivo .CSV da fatura — você verá uma prévia antes de salvar</div>
+            <div className="upload-sub">Clique ou arraste o arquivo <strong>.PDF</strong> (Sicoob) ou <strong>.CSV</strong> (outros cartões)</div>
           </div>
         </div>
       )}
@@ -683,7 +727,12 @@ export default function Lancamentos() {
           <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--brave-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div>
               <span style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>
-                {previewSource === 'csv' ? '💳 Prévia da Fatura CSV' : '📂 Prévia do OFX'} — {previewTxs.length} linhas
+                {previewSource === 'csv'
+                  ? pdfCardInfo
+                    ? `💳 Fatura Sicoob — cartão ...${pdfCardInfo.cardNumber.slice(-4)} — ${MONTH_NAMES[pdfCardInfo.invoiceMonth]}/${pdfCardInfo.invoiceYear}`
+                    : '💳 Prévia da Fatura CSV'
+                  : '📂 Prévia do OFX'
+                } — {previewTxs.length} linhas
               </span>
               <div style={{ fontSize: 12, color: 'var(--brave-gray)', marginTop: 2 }}>
                 {selectedFitids.size} selecionadas · {previewTxs.filter(t => t.alreadyImported).length} já importadas
