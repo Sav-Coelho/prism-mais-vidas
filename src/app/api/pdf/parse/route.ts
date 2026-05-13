@@ -16,10 +16,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Somente arquivos PDF são aceitos neste endpoint' }, { status: 400 })
     }
 
-    // pdf-parse é um módulo CommonJS — importamos dinamicamente para evitar
-    // problemas com o bundler do Next.js no edge runtime
+    // pdf-parse/lib/pdf-parse.js evita o bug do index.js que tenta carregar
+    // arquivos de teste e falha em ambientes de produção (Vercel, etc.)
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfParse = require('pdf-parse')
+    const pdfParse = require('pdf-parse/lib/pdf-parse.js')
 
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
