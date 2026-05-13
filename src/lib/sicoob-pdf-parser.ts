@@ -1,20 +1,15 @@
 /**
  * Parser para extrato de cartão de crédito Sicoob (PDF → transações)
  *
- * Formato esperado:
- *   Fatura de ABRIL  Vencimento: 03/04/2026
- *   MOVIMENTOS
- *   DD/MM  DESCRIÇÃO [PARCELA]  [CIDADE]  VALOR
- *   ...
- *   TOTAL  14.650,07
- *
- * Peculiaridades tratadas:
- *  - Linhas longas que quebram: continua acumulando até encontrar valor no final
- *  - Seções "GASTOS DE [NOME] (CARTÃO)" — ignoradas
- *  - Linha "- SALDO ANTERIOR" — ignorada
- *  - Linha moeda estrangeira "US$ 11,00 V.DOL 5,1382 56,52" — valor BRL no final
- *  - Ano inferido: se mês da transação > mês da fatura → ano anterior
- *  - Sinal invertido: positivo no extrato → negativo no sistema (despesa)
+ * Formato real extraído pelo pdf-parse:
+ *   - Cabeçalho: "Fatura de ABRILVencimento: 03/04/2026" (sem espaço entre mês e Vencimento)
+ *   - Transações com data e descrição colados: "06/12AMAZON BR 04/04 SAO PAULO34,29"
+ *   - Transações multi-linha: data sozinha "24/06", descrição na próxima linha, cidade depois, valor por último
+ *   - Moeda estrangeira: "V.DOL 5,138256,52" (taxa colada ao valor BRL — strip da taxa antes de extrair)
+ *   - Seções "GASTOS DE [NOME]" e nomes de portador "SANTOS (0074)" — ignoradas
+ *   - Linha "-SALDO ANTERIOR" — ignorada (não começa com DD/MM)
+ *   - Ano inferido: se mês da transação > mês da fatura → ano anterior
+ *   - Sinal invertido: positivo no extrato → negativo no sistema (despesa)
  */
 
 export interface SicoobTransaction {
@@ -46,8 +41,12 @@ const MONTH_PT: Record<string, number> = {
 // Padrão: valor BRL no final da linha — "1.234,56" ou "-1.234,56"
 const AMT_TAIL = /(-?\d{1,3}(?:\.\d{3})*,\d{2})$/
 
-// Início de transação: DD/MM no início da linha
-const TX_HEAD = /^(\d{2})\/(\d{2})\s/
+// Início de transação: DD/MM no início da linha (sem espaço obrigatório após a data)
+const TX_HEAD = /^(\d{2})\/(\d{2})/
+
+// Remove anotação de câmbio: "V.DOL 5,1382" colada ao valor BRL ("56,52")
+// Ex: "V.DOL 5,138256,52" → "56,52" (strip de "V.DOL " + taxa com 4 decimais)
+const VDOL_RE = /V\.DOL\s+\d[\d.]*,\d{4}/i
 
 // Linhas que devem ser ignoradas inteiramente (sem valor de transação)
 const SKIP_RE = [
@@ -95,8 +94,8 @@ const SKIP_RE = [
   /^[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-ZÁÀÂÃÉÊÍÓÔÕÚÇa-záàâãéêíóôõúç\s]+\(\d{4}\)$/,
 ]
 
-// Linhas que começam com "- " (SALDO ANTERIOR, etc.) — ignorar
-const SKIP_DASH = /^-\s+\S/
+// Linhas que começam com "-S" sem espaço (SALDO ANTERIOR colado) — ignorar
+const SKIP_DASH = /^-\s*\D/
 
 // Linha de pagamento do cartão — ignorar (não é despesa, é liquidação da fatura)
 const SKIP_PAYMENT = /PAGAMENTO DEBITO EM CONTA/i
@@ -124,6 +123,15 @@ function inferYear(txMonth: number, stmtMonth: number, stmtYear: number): number
   return txMonth > stmtMonth ? stmtYear - 1 : stmtYear
 }
 
+/**
+ * Remove a anotação de câmbio estrangeiro da linha.
+ * "US$ 11,00 U$ 11,00 V.DOL 5,138256,52" → "US$ 11,00 U$ 11,00 56,52"
+ * A taxa tem 4 casas decimais (ex: 5,1382) e fica colada ao valor BRL (ex: 56,52).
+ */
+function stripVDOL(line: string): string {
+  return line.replace(VDOL_RE, '')
+}
+
 function extractHeader(lines: string[]): {
   stmtMonth: number
   stmtYear: number
@@ -136,10 +144,10 @@ function extractHeader(lines: string[]): {
   let clientName = ''
 
   for (const line of lines) {
-    // "Fatura de ABRIL  Vencimento: 03/04/2026"
-    const faturaM = line.match(/Fatura de\s+(\w+)\s+Vencimento:\s*\d{2}\/\d{2}\/(\d{4})/i)
+    // "Fatura de ABRILVencimento: 03/04/2026" — espaço entre mês e Vencimento pode estar ausente
+    const faturaM = line.match(/Fatura de\s+(\w+)\s*Vencimento:\s*\d{2}\/\d{2}\/(\d{4})/i)
     if (faturaM) {
-      const key = faturaM[1].toUpperCase().replace('Ç', 'C').replace('Ã', 'A')
+      const key = faturaM[1].toUpperCase().replace(/Ç/g, 'C').replace(/Ã/g, 'A').replace(/Á/g, 'A')
       stmtMonth = MONTH_PT[key] ?? stmtMonth
       stmtYear = parseInt(faturaM[2])
     }
@@ -187,16 +195,21 @@ export function parseSicoobPDF(text: string): SicoobParseResult {
   const section = lines.slice(movIdx + 1, totalIdx)
 
   // ── Montagem de linhas completas ────────────────────────────────────────────
-  // Uma transação pode ocupar 1 ou 2 linhas (descrição quebra por cidade).
+  // Formato real do Sicoob:
+  //   - Data+descrição colados na mesma linha: "06/12AMAZON BR SAO PAULO34,29"
+  //   - Data sozinha, descrição e valor em linhas separadas:
+  //       "24/06" / "BR1*CHINA*LINK*DO*BR SAO" / "PAULO" / "1.000,00"
   // Acumula até encontrar valor BRL no final.
 
   const complete: Array<{ raw: string; lineIdx: number }> = []
   let pending = ''
   let pendingLineIdx = 0
 
-  section.forEach((line, i) => {
+  section.forEach((rawLine, i) => {
+    // Strip da anotação de câmbio antes de qualquer teste
+    const line = stripVDOL(rawLine).replace(/\s+/g, ' ').trim()
+
     if (shouldSkip(line)) {
-      // Se havia acumulação sem valor → descarta
       pending = ''
       return
     }
@@ -250,8 +263,9 @@ export function parseSicoobPDF(text: string): SicoobParseResult {
       return
     }
 
-    // Extrai descrição: entre "DD/MM " e o valor no final
-    const afterDate = raw.slice(dateM[0].length)
+    // Extrai descrição: tudo entre "DD/MM" e o valor no final
+    // dateM[0].length = 5 (exatamente "DD/MM")
+    const afterDate = raw.slice(5)
     const amtEscaped = amtM[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const memo = afterDate
       .replace(new RegExp(amtEscaped + '$'), '')
