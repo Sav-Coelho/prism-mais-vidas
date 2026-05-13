@@ -242,6 +242,11 @@ export default function Lancamentos() {
       const res = await fetch('/api/pdf/parse', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) {
+        if (data._debug_text) {
+          console.group('[PDF Debug] Texto extraído do PDF:')
+          console.log(data._debug_text)
+          console.groupEnd()
+        }
         showToast(`Erro: ${data.error}`)
         setParsing(false)
         return

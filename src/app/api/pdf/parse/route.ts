@@ -42,7 +42,11 @@ export async function POST(req: NextRequest) {
       const errMsg = result.errors.length > 0
         ? result.errors[0]
         : 'Nenhuma transação encontrada. Confirme que o PDF é um extrato de cartão Sicoob.'
-      return NextResponse.json({ error: errMsg }, { status: 422 })
+      // Inclui amostra do texto para diagnóstico
+      return NextResponse.json({
+        error: errMsg,
+        _debug_text: pdfText.slice(0, 4000),
+      }, { status: 422 })
     }
 
     // Converte datas para ISO string (serialização JSON)
