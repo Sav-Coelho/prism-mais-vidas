@@ -13,6 +13,7 @@ const DRE_GROUPS: Record<string, string[]> = {
     'Despesas Financeiras',
     'Despesas com Pessoal',
     'Despesas com Marketing',
+    'Despesas Comerciais',
     'Investimentos',
     'Despesas Não Operacionais',
   ],
