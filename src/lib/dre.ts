@@ -79,7 +79,8 @@ export function calcDRE(
   const despFin      = g('Despesas Financeiras')
   const despPessoal  = g('Despesas com Pessoal')
   const despMkt      = g('Despesas com Marketing')
-  const custosFixos  = despAdmin + despFin + despPessoal + despMkt
+  const despCom      = g('Despesas Comerciais')
+  const custosFixos  = despAdmin + despFin + despPessoal + despMkt + despCom
   const lucroOp      = margem - custosFixos
 
   const invest       = g('Investimentos')
@@ -134,6 +135,9 @@ export function calcDRE(
 
     { type: 'group', label: 'Despesas com Marketing', value: -despMkt, indent: 1, highlight: false },
     ...accts('Despesas com Marketing', false, 2),
+
+    { type: 'group', label: 'Despesas Comerciais', value: -despCom, indent: 1, highlight: false },
+    ...accts('Despesas Comerciais', false, 2),
 
     { type: 'subtotal', label: '(=) Lucro Operacional', sublabel: 'EBIT', value: lucroOp, indent: 0, highlight: true },
     ...(pei > 0 ? [{ type: 'breakeven' as const, label: '(=) Ponto de Equilíbrio de Investimentos', value: pei, indent: 0, highlight: false }] : []),
