@@ -286,8 +286,14 @@ export default function Lancamentos() {
   }
 
   const handlePreviewAccountChange = (fitid: string, accountId: string) => {
-    setSuggestedFitids(prev => { const n = new Set(prev); n.delete(fitid); return n })
-    setPreviewAccountMap(prev => ({ ...prev, [fitid]: accountId }))
+    // Remove badge de sugestão da transação que o usuário acabou de editar manualmente
+    const newSuggestedFitids = new Set(suggestedFitids)
+    newSuggestedFitids.delete(fitid)
+    setSuggestedFitids(newSuggestedFitids)
+
+    // Calcula o mapa atualizado de forma síncrona — evita stale closure no propagador abaixo
+    const newMap = { ...previewAccountMap, [fitid]: accountId }
+    setPreviewAccountMap(newMap)
 
     if (!isTransferAccount(accountId)) {
       setPreviewTransferDestMap(prev => { const n = { ...prev }; delete n[fitid]; return n })
@@ -295,21 +301,20 @@ export default function Lancamentos() {
 
     if (isTransferAccount(accountId) || !accountId || !previewTxs) return
 
-    if (accountId && previewTxs) {
-      const thisTx = previewTxs.find(t => t.fitid === fitid)
-      if (!thisTx) return
-      const thisTokens = tokenize(thisTx.memo)
-      const newSugs: string[] = []
-      previewTxs.forEach(t => {
-        if (t.fitid === fitid || t.alreadyImported || t.isBalance) return
-        if (previewAccountMap[t.fitid] && !suggestedFitids.has(t.fitid)) return
-        if (jaccardSimilarity(thisTokens, tokenize(t.memo)) >= REALTIME_THRESHOLD) newSugs.push(t.fitid)
-      })
-      if (newSugs.length > 0) {
-        setPreviewAccountMap(prev => { const n = { ...prev }; newSugs.forEach(f => { n[f] = accountId }); return n })
-        setSuggestedFitids(prev => { const n = new Set(prev); newSugs.forEach(f => n.add(f)); return n })
-        showToast(`💡 ${newSugs.length} linha${newSugs.length > 1 ? 's semelhantes classificadas' : ' semelhante classificada'} automaticamente`)
-      }
+    const thisTx = previewTxs.find(t => t.fitid === fitid)
+    if (!thisTx) return
+    const thisTokens = tokenize(thisTx.memo)
+    const toPropagate: string[] = []
+    previewTxs.forEach(t => {
+      if (t.fitid === fitid || t.alreadyImported || t.isBalance) return
+      // Usa newMap (valor atual) para não sobrescrever classificações manuais já feitas
+      if (newMap[t.fitid] && !newSuggestedFitids.has(t.fitid)) return
+      if (jaccardSimilarity(thisTokens, tokenize(t.memo)) >= REALTIME_THRESHOLD) toPropagate.push(t.fitid)
+    })
+    if (toPropagate.length > 0) {
+      setPreviewAccountMap(prev => { const n = { ...prev }; toPropagate.forEach(f => { n[f] = accountId }); return n })
+      setSuggestedFitids(prev => { const n = new Set(prev); toPropagate.forEach(f => n.add(f)); return n })
+      showToast(`💡 ${toPropagate.length} linha${toPropagate.length > 1 ? 's semelhantes classificadas' : ' semelhante classificada'} automaticamente`)
     }
   }
 
