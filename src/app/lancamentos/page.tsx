@@ -3,11 +3,14 @@ import { useEffect, useState, useRef } from 'react'
 import Shell from '@/components/Shell'
 import AccountCombobox from '@/components/AccountCombobox'
 import { MONTH_NAMES } from '@/lib/dre'
-import { tokenize } from '@/lib/classifier'
+import { tokenize, jaccardSimilarity } from '@/lib/classifier'
 import { parseCSV } from '@/lib/csv-parser'
 
 const CARD_ACCEPT = '.csv,.CSV,.pdf,.PDF'
 
+
+// Threshold para sugestão no painel: exige similaridade forte (≥0.5) para evitar falsos positivos
+const PROPAGATION_THRESHOLD = 0.5
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
@@ -285,11 +288,47 @@ export default function Lancamentos() {
   }
 
   const handlePreviewAccountChange = (fitid: string, accountId: string) => {
-    // Atualiza somente a transação editada — sem propagação para outras linhas
+    // Atualiza somente a transação editada (sem auto-aplicar em outras)
     setSuggestedFitids(prev => { const n = new Set(prev); n.delete(fitid); return n })
-    setPreviewAccountMap(prev => ({ ...prev, [fitid]: accountId }))
+    const newMap = { ...previewAccountMap, [fitid]: accountId }
+    setPreviewAccountMap(newMap)
     if (!isTransferAccount(accountId)) {
       setPreviewTransferDestMap(prev => { const n = { ...prev }; delete n[fitid]; return n })
+    }
+
+    // Busca transações similares no arquivo atual e adiciona ao painel de sugestões
+    // (igual ao comportamento do OFX bancário — o usuário aceita ou rejeita no painel)
+    if (isTransferAccount(accountId) || !accountId || !previewTxs) return
+    const account = accounts.find((a: any) => String(a.id) === accountId)
+    if (!account) return
+    const thisTx = previewTxs.find(t => t.fitid === fitid)
+    if (!thisTx) return
+
+    const thisTokens = tokenize(thisTx.memo)
+    const alreadyInPanel = new Set(pendingSuggestions.map(s => s.fitid))
+
+    const newSuggestions: { fitid: string; accountId: number; accountName: string; accountCode: string; confidence: number }[] = []
+    previewTxs.forEach(t => {
+      if (t.fitid === fitid || t.alreadyImported || t.isBalance) return
+      if (alreadyInPanel.has(t.fitid)) return          // já está no painel
+      if (newMap[t.fitid] && !suggestedFitids.has(t.fitid)) return  // já classificado manualmente
+      const score = jaccardSimilarity(thisTokens, tokenize(t.memo))
+      if (score >= PROPAGATION_THRESHOLD) {
+        newSuggestions.push({
+          fitid: t.fitid,
+          accountId: parseInt(accountId),
+          accountName: account.name,
+          accountCode: account.code,
+          confidence: Math.round(score * 100),
+        })
+      }
+    })
+
+    if (newSuggestions.length > 0) {
+      setPendingSuggestions(prev => [...prev, ...newSuggestions])
+      // Abre o painel se estava fechado
+      setPanelPos(prev => prev ?? { x: Math.max(16, window.innerWidth / 2 - 190), y: Math.max(16, window.innerHeight / 2 - 180) })
+      setPanelMinimized(false)
     }
   }
 
