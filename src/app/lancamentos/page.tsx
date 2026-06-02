@@ -51,6 +51,7 @@ interface LedgerBalance {
 
 export default function Lancamentos() {
   const [transactions, setTransactions] = useState<any[]>([])
+  const [cardTransactions, setCardTransactions] = useState<any[]>([])
   const [accounts, setAccounts] = useState<any[]>([])
   const [units, setUnits] = useState<any[]>([])
   const [unitId, setUnitId] = useState<string>('')
@@ -112,10 +113,12 @@ export default function Lancamentos() {
     const unitParam = unitId ? `&unitId=${unitId}` : ''
     Promise.all([
       fetch(`/api/transactions?month=${month}&year=${year}${unitParam}`).then(r => r.json()),
+      fetch(`/api/transactions?source=card${unitParam}`).then(r => r.json()),
       fetch('/api/accounts').then(r => r.json()),
       fetch('/api/units').then(r => r.json()),
-    ]).then(([txs, accs, uns]) => {
+    ]).then(([txs, cardTxs, accs, uns]) => {
       setTransactions(txs)
+      setCardTransactions(cardTxs)
       setAccounts(accs)
       setUnits(uns)
       setLoading(false)
@@ -520,14 +523,17 @@ export default function Lancamentos() {
   const isCardTx = (t: any) =>
     t.fitid && (t.fitid.startsWith('sicoob_') || t.fitid.startsWith('csv_'))
 
-  const filtered = transactions.filter(t => {
+  // Quando filtro 'cartao' está ativo, usa a lista completa de todas as faturas (todos os meses)
+  const activeList = filter === 'cartao' ? cardTransactions : transactions
+
+  const filtered = activeList.filter(t => {
     if (filter === 'sem-conta') return !t.accountId
     if (filter === 'classificado') return !!t.accountId
-    if (filter === 'cartao') return isCardTx(t)
+    if (filter === 'cartao') return true  // cardTransactions já é só cartão
     return true
   })
 
-  const cartaoCount = transactions.filter(isCardTx).length
+  const cartaoCount = cardTransactions.length
 
   const semConta = transactions.filter(t => !t.accountId).length
   const classificado = transactions.filter(t => !!t.accountId).length
@@ -964,7 +970,10 @@ export default function Lancamentos() {
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--brave-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>
-            {unitId ? units.find((u: any) => u.id === parseInt(unitId))?.name : 'Consolidado'} — {MONTH_NAMES[month]}/{year} — {filtered.length} lançamentos
+            {filter === 'cartao'
+              ? `💳 Cartão de Crédito — todos os períodos — ${filtered.length} lançamentos`
+              : `${unitId ? units.find((u: any) => u.id === parseInt(unitId))?.name : 'Consolidado'} — ${MONTH_NAMES[month]}/${year} — ${filtered.length} lançamentos`
+            }
           </span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {semConta > 0 && (
