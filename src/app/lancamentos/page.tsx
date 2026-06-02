@@ -3,12 +3,11 @@ import { useEffect, useState, useRef } from 'react'
 import Shell from '@/components/Shell'
 import AccountCombobox from '@/components/AccountCombobox'
 import { MONTH_NAMES } from '@/lib/dre'
-import { tokenize, jaccardSimilarity } from '@/lib/classifier'
+import { tokenize } from '@/lib/classifier'
 import { parseCSV } from '@/lib/csv-parser'
 
 const CARD_ACCEPT = '.csv,.CSV,.pdf,.PDF'
 
-const REALTIME_THRESHOLD = 0.25
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
@@ -286,35 +285,12 @@ export default function Lancamentos() {
   }
 
   const handlePreviewAccountChange = (fitid: string, accountId: string) => {
-    // Remove badge de sugestão da transação que o usuário acabou de editar manualmente
-    const newSuggestedFitids = new Set(suggestedFitids)
-    newSuggestedFitids.delete(fitid)
-    setSuggestedFitids(newSuggestedFitids)
-
-    // Calcula o mapa atualizado de forma síncrona — evita stale closure no propagador abaixo
-    const newMap = { ...previewAccountMap, [fitid]: accountId }
-    setPreviewAccountMap(newMap)
-
+    // Remove badge de sugestão (transação foi editada manualmente)
+    setSuggestedFitids(prev => { const n = new Set(prev); n.delete(fitid); return n })
+    // Atualiza apenas a transação editada — sem propagação para outras linhas
+    setPreviewAccountMap(prev => ({ ...prev, [fitid]: accountId }))
     if (!isTransferAccount(accountId)) {
       setPreviewTransferDestMap(prev => { const n = { ...prev }; delete n[fitid]; return n })
-    }
-
-    if (isTransferAccount(accountId) || !accountId || !previewTxs) return
-
-    const thisTx = previewTxs.find(t => t.fitid === fitid)
-    if (!thisTx) return
-    const thisTokens = tokenize(thisTx.memo)
-    const toPropagate: string[] = []
-    previewTxs.forEach(t => {
-      if (t.fitid === fitid || t.alreadyImported || t.isBalance) return
-      // Usa newMap (valor atual) para não sobrescrever classificações manuais já feitas
-      if (newMap[t.fitid] && !newSuggestedFitids.has(t.fitid)) return
-      if (jaccardSimilarity(thisTokens, tokenize(t.memo)) >= REALTIME_THRESHOLD) toPropagate.push(t.fitid)
-    })
-    if (toPropagate.length > 0) {
-      setPreviewAccountMap(prev => { const n = { ...prev }; toPropagate.forEach(f => { n[f] = accountId }); return n })
-      setSuggestedFitids(prev => { const n = new Set(prev); toPropagate.forEach(f => n.add(f)); return n })
-      showToast(`💡 ${toPropagate.length} linha${toPropagate.length > 1 ? 's semelhantes classificadas' : ' semelhante classificada'} automaticamente`)
     }
   }
 
