@@ -3,11 +3,16 @@ import { useEffect, useState, useRef } from 'react'
 import Shell from '@/components/Shell'
 import AccountCombobox from '@/components/AccountCombobox'
 import { MONTH_NAMES } from '@/lib/dre'
-import { tokenize } from '@/lib/classifier'
+import { tokenize, jaccardSimilarity } from '@/lib/classifier'
 import { parseCSV } from '@/lib/csv-parser'
 
 const CARD_ACCEPT = '.csv,.CSV,.pdf,.PDF'
 
+
+// Threshold para propagação em tempo real: exige similaridade alta para evitar falsos positivos
+// Exemplos que passam (≥0.5): MP *ALIEXPRESS e DL *AliExpress (tokens idênticos após normalização)
+// Exemplos que NÃO passam (<0.5): MP *ALIEXPRESS e MP *NUVEMSHOP (só compartilham cidade)
+const PROPAGATION_THRESHOLD = 0.5
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
@@ -285,12 +290,49 @@ export default function Lancamentos() {
   }
 
   const handlePreviewAccountChange = (fitid: string, accountId: string) => {
-    // Remove badge de sugestão (transação foi editada manualmente)
-    setSuggestedFitids(prev => { const n = new Set(prev); n.delete(fitid); return n })
-    // Atualiza apenas a transação editada — sem propagação para outras linhas
-    setPreviewAccountMap(prev => ({ ...prev, [fitid]: accountId }))
+    // Calcula os dois estados atualizados de forma síncrona (evita stale closure)
+    const newSuggestedFitids = new Set(suggestedFitids)
+    newSuggestedFitids.delete(fitid) // transação editada manualmente deixa de ser sugestão
+    setSuggestedFitids(newSuggestedFitids)
+
+    const newMap = { ...previewAccountMap, [fitid]: accountId }
+    setPreviewAccountMap(newMap)
+
     if (!isTransferAccount(accountId)) {
       setPreviewTransferDestMap(prev => { const n = { ...prev }; delete n[fitid]; return n })
+    }
+
+    // Propagação inteligente: sugere a mesma conta para transações com descrição muito parecida
+    // Usa threshold alto (0.5) para evitar falsos positivos (ex: AliExpress ≠ Nuvemshop)
+    if (isTransferAccount(accountId) || !accountId || !previewTxs) return
+
+    const thisTx = previewTxs.find(t => t.fitid === fitid)
+    if (!thisTx) return
+    const thisTokens = tokenize(thisTx.memo)
+    const toSuggest: string[] = []
+
+    previewTxs.forEach(t => {
+      if (t.fitid === fitid || t.alreadyImported || t.isBalance) return
+      // Não sobrescreve classificações manuais já confirmadas (apenas sugestões pendentes)
+      if (newMap[t.fitid] && !newSuggestedFitids.has(t.fitid)) return
+      if (jaccardSimilarity(thisTokens, tokenize(t.memo)) >= PROPAGATION_THRESHOLD) {
+        toSuggest.push(t.fitid)
+      }
+    })
+
+    if (toSuggest.length > 0) {
+      // Preenche o combobox como sugestão (badge laranja + botão "aceitar" visível)
+      setPreviewAccountMap(prev => {
+        const n = { ...prev }
+        toSuggest.forEach(f => { n[f] = accountId })
+        return n
+      })
+      setSuggestedFitids(prev => {
+        const n = new Set(prev)
+        toSuggest.forEach(f => n.add(f))
+        return n
+      })
+      showToast(`💡 ${toSuggest.length} lançamento${toSuggest.length > 1 ? 's semelhantes sugeridos' : ' semelhante sugerido'} — revise e aceite`)
     }
   }
 
