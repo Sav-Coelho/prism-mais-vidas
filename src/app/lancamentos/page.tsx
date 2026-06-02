@@ -431,9 +431,9 @@ export default function Lancamentos() {
         ledgerBalance,
         bankInfo: detectedBankInfo,
         balanceTransactions,
-        // Fatura de cartão: contabiliza todos os lançamentos no mês da fatura
-        invoiceMonth: pdfCardInfo?.invoiceMonth ?? null,
-        invoiceYear: pdfCardInfo?.invoiceYear ?? null,
+        // Fatura de cartão: contabiliza todos os lançamentos no mês selecionado na página
+        invoiceMonth: previewSource === 'csv' ? month : null,
+        invoiceYear:  previewSource === 'csv' ? year  : null,
       })
     })
     const data = await res.json()
@@ -780,6 +780,13 @@ export default function Lancamentos() {
                   </span>
                 )}
               </div>
+              {previewSource === 'csv' && (
+                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, background: '#e8f0fe', color: '#1a5fa8', borderRadius: 4, padding: '2px 10px', fontWeight: 600 }}>
+                    📅 Todos os lançamentos serão registrados em <strong>{MONTH_NAMES[month]}/{year}</strong> — ajuste o mês/ano no topo se necessário
+                  </span>
+                </div>
+              )}
               {(detectedBankInfo?.bankId || detectedBankInfo?.org) && (
                 <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                   {matchedBankAccount ? (
