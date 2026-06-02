@@ -59,7 +59,7 @@ export default function Lancamentos() {
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState('')
   const [drag, setDrag] = useState(false)
-  const [filter, setFilter] = useState<'all' | 'sem-conta' | 'classificado'>('all')
+  const [filter, setFilter] = useState<'all' | 'sem-conta' | 'classificado' | 'cartao'>('all')
   const [selectedTxIds, setSelectedTxIds] = useState<Set<number>>(new Set())
   const fileRef = useRef<HTMLInputElement>(null)
   const csvFileRef = useRef<HTMLInputElement>(null)
@@ -517,11 +517,17 @@ export default function Lancamentos() {
   const selectAllVisible = () => setSelectedTxIds(new Set(filtered.map(t => t.id)))
   const clearTxSelection = () => setSelectedTxIds(new Set())
 
+  const isCardTx = (t: any) =>
+    t.fitid && (t.fitid.startsWith('sicoob_') || t.fitid.startsWith('csv_'))
+
   const filtered = transactions.filter(t => {
     if (filter === 'sem-conta') return !t.accountId
     if (filter === 'classificado') return !!t.accountId
+    if (filter === 'cartao') return isCardTx(t)
     return true
   })
+
+  const cartaoCount = transactions.filter(isCardTx).length
 
   const semConta = transactions.filter(t => !t.accountId).length
   const classificado = transactions.filter(t => !!t.accountId).length
@@ -936,7 +942,7 @@ export default function Lancamentos() {
         </div>
       )}
 
-      <div className="metrics-grid mb-6" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div className="metrics-grid mb-6" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
         <div className="metric-card" style={{ cursor: 'pointer', border: filter === 'all' ? '2px solid var(--brave-yellow)' : '' }} onClick={() => setFilter('all')}>
           <div className="metric-label">Total no período</div>
           <div className="metric-value">{transactions.length}</div>
@@ -948,6 +954,10 @@ export default function Lancamentos() {
         <div className="metric-card" style={{ cursor: 'pointer', border: filter === 'classificado' ? '2px solid var(--brave-yellow)' : '' }} onClick={() => setFilter('classificado')}>
           <div className="metric-label">Classificados</div>
           <div className="metric-value" style={{ color: '#1a7a4a' }}>{classificado}</div>
+        </div>
+        <div className="metric-card" style={{ cursor: 'pointer', border: filter === 'cartao' ? '2px solid var(--brave-yellow)' : '' }} onClick={() => setFilter('cartao')}>
+          <div className="metric-label">💳 Cartão de Crédito</div>
+          <div className="metric-value" style={{ color: '#1a5fa8' }}>{cartaoCount}</div>
         </div>
       </div>
 
@@ -1004,7 +1014,14 @@ export default function Lancamentos() {
                     </td>
                     <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(tx.date)}</td>
                     <td style={{ maxWidth: 240 }}>
-                      <div style={{ fontSize: 13 }}>{tx.description}</div>
+                      <div style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {isCardTx(tx) && (
+                          <span style={{ fontSize: 10, background: '#e8f0fe', color: '#1a5fa8', borderRadius: 4, padding: '1px 5px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                            💳 cartão
+                          </span>
+                        )}
+                        {tx.description}
+                      </div>
                       {tx.memo && tx.memo !== tx.description && (
                         <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>{tx.memo}</div>
                       )}
