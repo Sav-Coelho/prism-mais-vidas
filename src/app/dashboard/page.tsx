@@ -36,9 +36,15 @@ export default function Dashboard() {
   const dre = data?.dre
   const yearData = (data?.yearData || []).map((d: any, i: number) => ({
     mes: MONTH_NAMES[i + 1],
-    'Receita Bruta': d.receitaBruta,
-    'Resultado Líquido': d.resultadoLiquido,
     mesIdx: i + 1,
+    'Receita Bruta': d.receitaBruta,
+    'Margem Contribuição': d.margemContribuicao,
+    'Lucro Operacional': d.resultadoOperacional,
+    'Resultado Líquido': d.resultadoLiquido,
+    // Margens % (0 quando sem receita)
+    'Margem Contrib. %': d.receitaBruta > 0 ? +((d.margemContribuicao / d.receitaBruta) * 100).toFixed(1) : null,
+    'Margem Operacional %': d.receitaBruta > 0 ? +((d.resultadoOperacional / d.receitaBruta) * 100).toFixed(1) : null,
+    'Margem Líquida %': d.receitaBruta > 0 ? +((d.resultadoLiquido / d.receitaBruta) * 100).toFixed(1) : null,
   }))
 
   const margem = dre?.receitaBruta > 0
@@ -178,27 +184,47 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* DRE resumido */}
-          <div className="card">
-            <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 20 }}>
-              DRE — {periodoLabel}
+          {/* Gráficos de indicadores financeiros */}
+          <div className="grid-2 mb-6">
+            {/* Linha 1: Evolução dos resultados em R$ */}
+            <div className="card">
+              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                Evolução dos Resultados — {year}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>Valores em R$</div>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={yearData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#edf2f4" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number) => fmt(v)} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="Receita Bruta" stroke="#2b2d42" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  <Line type="monotone" dataKey="Margem Contribuição" stroke="#8d99ae" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  <Line type="monotone" dataKey="Lucro Operacional" stroke="#eaca2d" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  <Line type="monotone" dataKey="Resultado Líquido" stroke="#1a7a4a" strokeWidth={2.5} dot={{ r: 4 }} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {dre.lines.map((line: any, i: number) => (
-                <div
-                  key={i}
-                  className={`dre-row ${line.highlight ? 'highlight' : ''}`}
-                  style={{ paddingLeft: line.indent ? 32 : 16 }}
-                >
-                  <div>
-                    <div className="dre-label">{line.label}</div>
-                    {line.sublabel && <div className="dre-sublabel">{line.sublabel}</div>}
-                  </div>
-                  <div className={`dre-value ${line.value >= 0 ? 'pos' : 'neg'}`}>
-                    {fmt(line.value)}
-                  </div>
-                </div>
-              ))}
+
+            {/* Linha 2: Evolução das margens % */}
+            <div className="card">
+              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                Evolução das Margens — {year}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>% sobre Receita Bruta</div>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={yearData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#edf2f4" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `${v}%`} />
+                  <Tooltip formatter={(v: number | null) => v != null ? `${v.toFixed(1)}%` : '—'} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="Margem Contrib. %" stroke="#8d99ae" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  <Line type="monotone" dataKey="Margem Operacional %" stroke="#eaca2d" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  <Line type="monotone" dataKey="Margem Líquida %" stroke="#1a7a4a" strokeWidth={2.5} dot={{ r: 4 }} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </>
