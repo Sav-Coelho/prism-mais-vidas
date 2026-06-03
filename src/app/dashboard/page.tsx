@@ -218,7 +218,7 @@ export default function Dashboard() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#edf2f4" />
                   <XAxis dataKey="mes" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `${v}%`} />
-                  <Tooltip formatter={(v: number | null) => v != null ? `${v.toFixed(1)}%` : '—'} />
+                  <Tooltip formatter={(v: unknown) => typeof v === 'number' ? `${v.toFixed(1)}%` : '—'} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Line type="monotone" dataKey="Margem Contrib. %" stroke="#8d99ae" strokeWidth={2} dot={{ r: 3 }} connectNulls />
                   <Line type="monotone" dataKey="Margem Operacional %" stroke="#eaca2d" strokeWidth={2} dot={{ r: 3 }} connectNulls />
