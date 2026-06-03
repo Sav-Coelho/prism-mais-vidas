@@ -151,34 +151,54 @@ export default function DREPage() {
 
           <div className="grid-2 mb-6">
             {/* DRE Estruturado */}
-            <div className="card" style={{ overflowY: 'auto', maxHeight: 680 }}>
-              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
-                DRE — {MONTH_NAMES[month]}/{year} · {unitLabel}
+            <div className="card" style={{ overflowY: 'auto', maxHeight: 680, padding: 0 }}>
+              {/* Cabeçalho da tabela */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 14px 6px 14px', borderBottom: '1px solid var(--brave-light)' }}>
+                <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>
+                  DRE — {MONTH_NAMES[month]}/{year} · {unitLabel}
+                </div>
+                <div style={{ display: 'flex', gap: 8, textAlign: 'right' }}>
+                  <div style={{ fontSize: 11, color: 'var(--brave-gray)', minWidth: 90 }}>Valor</div>
+                  <div style={{ fontSize: 11, color: 'var(--brave-gray)', minWidth: 52 }}>AV %</div>
+                </div>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>
-                % calculado sobre Receita Operacional
+              <div style={{ fontSize: 10, color: 'var(--brave-gray)', padding: '4px 14px 10px', borderBottom: '1px solid var(--brave-light)' }}>
+                AV % = Análise Vertical — participação sobre a Receita Operacional Bruta
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {dre.lines.map((line: any, i: number) => (
-                  <div key={i} style={lineStyle(line.type, line.indent, line.value)}>
-                    <div>
-                      <div style={labelStyle(line.type, line.indent)}>{line.label}</div>
-                      {line.sublabel && (
-                        <div style={{ fontSize: 10, color: 'var(--brave-gray)' }}>{line.sublabel}</div>
-                      )}
-                    </div>
-                    <div style={{ textAlign: 'right', minWidth: 100 }}>
-                      <div style={valueStyle(line.type, line.value)}>
-                        {line.value !== 0 ? fmt(line.value) : '—'}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 1, padding: '6px 0' }}>
+                {dre.lines.map((line: any, i: number) => {
+                  const showPct = line.type !== 'transfer' && line.type !== 'breakeven' && line.value !== 0 && dre.receitaBruta > 0
+                  const avPct = showPct ? pct(Math.abs(line.value), dre.receitaBruta) : '—'
+                  const isHighlight = line.type === 'subtotal'
+                  const pctColor = isHighlight
+                    ? (line.value >= 0 ? '#1a7a4a' : '#c0392b')
+                    : 'var(--brave-gray)'
+
+                  return (
+                    <div key={i} style={{ ...lineStyle(line.type, line.indent, line.value), justifyContent: 'space-between' }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={labelStyle(line.type, line.indent)}>{line.label}</div>
+                        {line.sublabel && (
+                          <div style={{ fontSize: 10, color: 'var(--brave-gray)' }}>{line.sublabel}</div>
+                        )}
                       </div>
-                      {(line.type === 'subtotal' || line.type === 'group') && line.indent === 0 && dre.receitaBruta > 0 && line.value !== 0 && (
-                        <div style={{ fontSize: 10, color: 'var(--brave-gray)' }}>
-                          {pct(Math.abs(line.value), dre.receitaBruta)}
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                        <div style={{ ...valueStyle(line.type, line.value), minWidth: 90, textAlign: 'right' }}>
+                          {line.value !== 0 ? fmt(line.value) : '—'}
                         </div>
-                      )}
+                        <div style={{
+                          minWidth: 52, textAlign: 'right',
+                          fontSize: isHighlight ? 12 : 11,
+                          fontWeight: isHighlight ? 700 : 400,
+                          color: showPct ? pctColor : 'transparent',
+                        }}>
+                          {showPct ? avPct : '—'}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
 
