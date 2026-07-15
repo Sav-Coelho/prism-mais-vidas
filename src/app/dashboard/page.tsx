@@ -4,7 +4,7 @@ import Shell from '@/components/Shell'
 import { MONTH_NAMES } from '@/lib/dre'
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid, Legend, Cell
+  ResponsiveContainer, CartesianGrid, Legend, Cell, PieChart, Pie
 } from 'recharts'
 
 const fmt = (v: number) =>
@@ -12,6 +12,9 @@ const fmt = (v: number) =>
 
 const fmtPct = (v: number, base: number) =>
   base > 0 ? `${((v / base) * 100).toFixed(1)}%` : '—'
+
+// Paleta categórica dedicada ao donut de composição (validada p/ CVD; cinza = "Outros")
+const DONUT_COLORS = ['#2b6cb0', '#d98c1f', '#2a9d6f', '#c0392b', '#7c5cbf', '#0e7490', '#5a6472']
 
 const now = new Date()
 
@@ -50,6 +53,31 @@ export default function Dashboard() {
   const margem = dre?.receitaBruta > 0
     ? ((dre.resultadoLiquido / dre.receitaBruta) * 100).toFixed(1)
     : '0.0'
+
+  // Composição de despesas — grupos negativos da DRE (top 6 + Outros)
+  const expenseGroups = ((dre?.lines || []) as any[])
+    .filter(l => l.type === 'group' && l.value < 0)
+    .map(l => ({ label: l.label, value: Math.abs(l.value) }))
+    .filter(g => g.value > 0)
+    .sort((a, b) => b.value - a.value)
+  const topExpenses = expenseGroups.slice(0, 6)
+  const outrosExp = expenseGroups.slice(6).reduce((s, g) => s + g.value, 0)
+  const donutData = outrosExp > 0 ? topExpenses.concat([{ label: 'Outros', value: outrosExp }]) : topExpenses
+  const totalDespesas = expenseGroups.reduce((s, g) => s + g.value, 0)
+
+  // Custos e ponto de equilíbrio
+  const custosVar = dre ? (dre.receitaLiquida - dre.margemContribuicao) : 0
+  const custosFixos = dre?.custosFixos ?? 0
+  const pef = dre?.pef ?? 0
+  const margemSeguranca = dre?.receitaBruta > 0 && pef > 0
+    ? ((dre.receitaBruta - pef) / dre.receitaBruta) * 100
+    : null
+  const breakevenData = dre ? [
+    { label: 'Receita', value: dre.receitaBruta },
+    { label: 'PEF', value: dre.pef },
+    { label: 'PEI', value: dre.pei },
+    { label: 'PEO', value: dre.peo },
+  ] : []
 
   const periodoLabel = consolidated
     ? `Consolidado ${year}`
@@ -132,6 +160,103 @@ export default function Dashboard() {
                 {m.pct && <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>{m.pct} da receita</div>}
               </div>
             ))}
+          </div>
+
+          {/* KPIs secundários: custos e ponto de equilíbrio */}
+          <div className="metrics-grid mb-6" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+            <div className="metric-card">
+              <div className="metric-accent" style={{ background: '#8d99ae' }} />
+              <div className="metric-label">Custos Variáveis</div>
+              <div className="metric-value" style={{ fontSize: 17 }}>{fmt(custosVar)}</div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>{fmtPct(custosVar, dre.receitaBruta)} da receita</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-accent" style={{ background: '#c0392b' }} />
+              <div className="metric-label">Custos Fixos</div>
+              <div className="metric-value" style={{ fontSize: 17 }}>{fmt(custosFixos)}</div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>{fmtPct(custosFixos, dre.receitaBruta)} da receita</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-accent" style={{ background: 'var(--brave-yellow)' }} />
+              <div className="metric-label">Ponto de Equilíbrio (PEF)</div>
+              <div className="metric-value" style={{ fontSize: 17 }}>{pef > 0 ? fmt(pef) : '—'}</div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>receita mínima p/ equilíbrio</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-accent" style={{ background: margemSeguranca != null && margemSeguranca >= 0 ? '#1a7a4a' : '#c0392b' }} />
+              <div className="metric-label">Margem de Segurança</div>
+              <div className="metric-value" style={{ fontSize: 17, color: margemSeguranca != null && margemSeguranca >= 0 ? '#1a7a4a' : '#c0392b' }}>
+                {margemSeguranca != null ? `${margemSeguranca.toFixed(1)}%` : '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>quanto a receita supera o PEF</div>
+            </div>
+          </div>
+
+          <div className="grid-2 mb-6">
+            {/* Composição de Despesas — donut */}
+            <div className="card">
+              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                Composição de Despesas e Custos — {periodoLabel}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>Total: {fmt(totalDespesas)}</div>
+              {donutData.length === 0 ? (
+                <div style={{ color: 'var(--brave-gray)', fontSize: 13, padding: 20 }}>Sem despesas classificadas no período.</div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <ResponsiveContainer width="48%" height={220} minWidth={180}>
+                    <PieChart>
+                      <Pie data={donutData} dataKey="value" nameKey="label" cx="50%" cy="50%"
+                        innerRadius={52} outerRadius={90} paddingAngle={2} stroke="#fff" strokeWidth={2}>
+                        {donutData.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(v: number, n: string) => [`${fmt(v)} (${fmtPct(v, totalDespesas)})`, n]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {donutData.map((g, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 2, background: DONUT_COLORS[i % DONUT_COLORS.length], flexShrink: 0 }} />
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label}</span>
+                        <span style={{ fontWeight: 600 }}>{fmt(g.value)}</span>
+                        <span style={{ color: 'var(--brave-gray)', width: 44, textAlign: 'right' }}>{fmtPct(g.value, totalDespesas)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Ponto de Equilíbrio vs Receita */}
+            <div className="card">
+              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                Ponto de Equilíbrio vs Receita — {periodoLabel}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>
+                Barras de equilíbrio abaixo da Receita = operação acima do ponto de equilíbrio
+              </div>
+              {dre.mcPct > 0 ? (
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={breakevenData} layout="vertical" margin={{ left: 10, right: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#edf2f4" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="label" tick={{ fontSize: 12 }} width={54} />
+                    <Tooltip formatter={(v: number) => fmt(v)} />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={22}>
+                      {breakevenData.map((e, i) => (
+                        <Cell key={i} fill={
+                          e.label === 'Receita' ? '#2b2d42'
+                            : dre.receitaBruta >= e.value ? '#1a7a4a' : '#c0392b'
+                        } />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ color: 'var(--brave-gray)', fontSize: 13, padding: 20 }}>
+                  Margem de contribuição não positiva — ponto de equilíbrio não calculável.
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="grid-2 mb-6">

@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo } from 'react'
 import Shell from '@/components/Shell'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell
+  Tooltip, ResponsiveContainer, Cell, PieChart, Pie
 } from 'recharts'
 import { MONTH_NAMES } from '@/lib/dre'
 import { calcStockMetrics } from '@/lib/abc'
@@ -149,9 +149,20 @@ export default function Compras() {
 function TabDashboard({ orders, suppliers }: { orders: PurchaseOrder[]; suppliers: Supplier[] }) {
   const now = new Date()
   const thisMonth = orders.filter(o => o.month === now.getMonth() + 1 && o.year === now.getFullYear())
-  const spentMonth = thisMonth.filter(o => o.status !== 'CANCELLED').reduce((a, o) => a + o.totalAmount, 0)
+  const activeMonth = thisMonth.filter(o => o.status !== 'CANCELLED')
+  const spentMonth = activeMonth.reduce((a, o) => a + o.totalAmount, 0)
+  const ticketMedio = activeMonth.length > 0 ? spentMonth / activeMonth.length : 0
   const openOrders = orders.filter(o => ['OPEN', 'DRAFT', 'PARTIAL'].includes(o.status))
+  const comprometido = openOrders.reduce((a, o) => a + o.totalAmount, 0)
   const lateOrders = orders.filter(o => isLate(o))
+
+  // Lead time e pontualidade (pedidos recebidos)
+  const received = orders.filter(o => o.status === 'RECEIVED' && o.receivedDate)
+  const leadTimes = received.map(o => (new Date(o.receivedDate!).getTime() - new Date(o.createdAt).getTime()) / 86400000)
+  const leadTimeAvg = leadTimes.length > 0 ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length) : 0
+  const receivedWithExp = received.filter(o => o.expectedDate)
+  const onTimeCount = receivedWithExp.filter(o => new Date(o.receivedDate!) <= new Date(o.expectedDate!)).length
+  const onTimeRate = receivedWithExp.length > 0 ? Math.round((onTimeCount / receivedWithExp.length) * 100) : null
 
   // Monthly spend last 6 months
   const months: { label: string; total: number }[] = []
@@ -162,62 +173,125 @@ function TabDashboard({ orders, suppliers }: { orders: PurchaseOrder[]; supplier
     months.push({ label: d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }), total })
   }
 
-  // Top suppliers
+  // Pedidos por status (donut)
+  const STATUS_ORDER = ['DRAFT', 'OPEN', 'PARTIAL', 'RECEIVED', 'CANCELLED']
+  const statusData = STATUS_ORDER
+    .map(st => ({ status: st, label: STATUS_LABEL[st], value: orders.filter(o => o.status === st).length }))
+    .filter(d => d.value > 0)
+
+  // Top fornecedores (barra)
   const topSuppliers = suppliers
     .map(s => ({ name: s.name, total: s.purchaseOrders.filter(o => o.status !== 'CANCELLED').reduce((a, o) => a + o.totalAmount, 0) }))
-    .sort((a, b) => b.total - a.total).slice(0, 5)
+    .filter(s => s.total > 0)
+    .sort((a, b) => b.total - a.total).slice(0, 6)
+
+  // Gasto por unidade
+  const unitMap: Record<string, number> = {}
+  orders.filter(o => o.status !== 'CANCELLED').forEach(o => {
+    const key = o.unit?.name || 'Sem unidade'
+    unitMap[key] = (unitMap[key] || 0) + o.totalAmount
+  })
+  const spendByUnit = Object.keys(unitMap).map(name => ({ name, total: unitMap[name] })).sort((a, b) => b.total - a.total)
 
   return (
     <>
+      <div className="metrics-grid mb-4" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+        <KPI label="Gasto este mês" value={fmt(spentMonth)} hint={`${activeMonth.length} pedido(s)`} />
+        <KPI label="Comprometido (a pagar)" value={fmt(comprometido)} hint="pedidos em aberto" color={comprometido > 0 ? '#c0392b' : undefined} />
+        <KPI label="Ticket médio" value={fmt(ticketMedio)} hint="por pedido no mês" />
+        <KPI label="Lead time médio" value={leadTimeAvg > 0 ? `${leadTimeAvg} dias` : '—'} hint="pedido → recebimento" />
+      </div>
       <div className="metrics-grid mb-6" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-        <div className="metric-card">
-          <div className="metric-label">Gasto este mês</div>
-          <div className="metric-value" style={{ fontSize: 18 }}>{fmt(spentMonth)}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Pedidos em aberto</div>
-          <div className="metric-value">{openOrders.length}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Pedidos atrasados</div>
-          <div className="metric-value" style={{ color: lateOrders.length > 0 ? '#c0392b' : '#1a7a4a' }}>
-            {lateOrders.length}
-          </div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Fornecedores ativos</div>
-          <div className="metric-value">{suppliers.filter(s => s.active).length}</div>
-        </div>
+        <KPI label="Entrega no prazo" value={onTimeRate != null ? `${onTimeRate}%` : '—'} hint="dos pedidos recebidos"
+          color={onTimeRate != null ? (onTimeRate >= 80 ? '#1a7a4a' : onTimeRate >= 50 ? '#d59f07' : '#c0392b') : undefined} />
+        <KPI label="Pedidos em aberto" value={String(openOrders.length)} />
+        <KPI label="Pedidos atrasados" value={String(lateOrders.length)} color={lateOrders.length > 0 ? '#c0392b' : '#1a7a4a'} />
+        <KPI label="Fornecedores ativos" value={String(suppliers.filter(s => s.active).length)} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 16 }}>
         <div className="card">
           <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, marginBottom: 16, fontSize: 14 }}>
             Evolução de Gastos (últimos 6 meses)
           </div>
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={220}>
             <LineChart data={months}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
               <XAxis dataKey="label" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `R$${(v/1000).toFixed(0)}k`} />
               <Tooltip formatter={(v: number) => fmt(v)} />
-              <Line type="monotone" dataKey="total" stroke="var(--brave-yellow)" strokeWidth={2} dot={{ fill: 'var(--brave-yellow)' }} />
+              <Line type="monotone" dataKey="total" stroke="var(--brave-yellow)" strokeWidth={2} dot={{ fill: 'var(--brave-yellow)', r: 4 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
         <div className="card">
+          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, marginBottom: 8, fontSize: 14 }}>
+            Pedidos por Status
+          </div>
+          {statusData.length === 0 ? (
+            <div style={{ color: 'var(--brave-gray)', fontSize: 13 }}>Nenhum pedido ainda</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={150}>
+                <PieChart>
+                  <Pie data={statusData} dataKey="value" nameKey="label" cx="50%" cy="50%" innerRadius={40} outerRadius={65} paddingAngle={2} stroke="#fff" strokeWidth={2}>
+                    {statusData.map(d => <Cell key={d.status} fill={STATUS_COLOR[d.status]} />)}
+                  </Pie>
+                  <Tooltip formatter={(v: number, n: string) => [`${v} pedido(s)`, n]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+                {statusData.map(d => (
+                  <div key={d.status} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 2, background: STATUS_COLOR[d.status], flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>{d.label}</span>
+                    <span style={{ fontWeight: 600 }}>{d.value}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <div className="card">
           <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, marginBottom: 16, fontSize: 14 }}>
-            Top Fornecedores
+            Top Fornecedores por Gasto
           </div>
           {topSuppliers.length === 0 ? (
             <div style={{ color: 'var(--brave-gray)', fontSize: 13 }}>Nenhum dado ainda</div>
-          ) : topSuppliers.map((s, i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #eee', fontSize: 13 }}>
-              <span style={{ fontWeight: i === 0 ? 600 : 400 }}>{s.name}</span>
-              <span style={{ color: '#1a7a4a', fontWeight: 600 }}>{fmt(s.total)}</span>
-            </div>
-          ))}
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(160, topSuppliers.length * 34)}>
+              <BarChart data={topSuppliers} layout="vertical" margin={{ left: 10, right: 16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eee" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `R$${(v/1000).toFixed(0)}k`} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
+                <Tooltip formatter={(v: number) => fmt(v)} />
+                <Bar dataKey="total" fill="#2b2d42" radius={[0, 4, 4, 0]} barSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="card">
+          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, marginBottom: 16, fontSize: 14 }}>
+            Gasto por Unidade
+          </div>
+          {spendByUnit.length === 0 ? (
+            <div style={{ color: 'var(--brave-gray)', fontSize: 13 }}>Nenhum dado ainda</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(160, spendByUnit.length * 34)}>
+              <BarChart data={spendByUnit} layout="vertical" margin={{ left: 10, right: 16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eee" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `R$${(v/1000).toFixed(0)}k`} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
+                <Tooltip formatter={(v: number) => fmt(v)} />
+                <Bar dataKey="total" fill="#2b6cb0" radius={[0, 4, 4, 0]} barSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
