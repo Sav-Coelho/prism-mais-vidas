@@ -5,6 +5,8 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell
 } from 'recharts'
+import { MONTH_NAMES } from '@/lib/dre'
+import { calcStockMetrics } from '@/lib/abc'
 
 // ─── Types ───────────────────────────────────────────────
 type Unit = { id: number; name: string }
@@ -75,7 +77,7 @@ function calcABC(suppliers: Supplier[]) {
 
 // ─── Main Page ───────────────────────────────────────────
 export default function Compras() {
-  const [tab, setTab] = useState<'dashboard' | 'pedidos' | 'fornecedores' | 'analise'>('dashboard')
+  const [tab, setTab] = useState<'dashboard' | 'pedidos' | 'fornecedores' | 'analise' | 'dre'>('dashboard')
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [units, setUnits] = useState<Unit[]>([])
@@ -121,6 +123,7 @@ export default function Compras() {
         {tabBtn('pedidos', '📋 Pedidos')}
         {tabBtn('fornecedores', '🏭 Fornecedores')}
         {tabBtn('analise', '📊 Análise Inteligente')}
+        {tabBtn('dre', '📉 Cruzamento DRE')}
       </div>
 
       {loading ? (
@@ -131,6 +134,7 @@ export default function Compras() {
           {tab === 'pedidos' && <TabPedidos orders={orders} suppliers={suppliers} units={units} onRefresh={load} showToast={showToast} />}
           {tab === 'fornecedores' && <TabFornecedores suppliers={suppliers} onRefresh={load} showToast={showToast} />}
           {tab === 'analise' && <TabAnalise orders={orders} suppliers={suppliers} />}
+          {tab === 'dre' && <TabCruzamentoDRE orders={orders} suppliers={suppliers} units={units} />}
         </>
       )}
 
@@ -697,6 +701,209 @@ function TabFornecedores({ suppliers, onRefresh, showToast }: {
             </div>
           </div>
         </div>
+      )}
+    </>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════
+// TAB: CRUZAMENTO DRE
+// ═══════════════════════════════════════════════════════════
+function KPI({ label, value, hint, color }: { label: string; value: string; hint?: string; color?: string }) {
+  return (
+    <div className="metric-card">
+      <div className="metric-label">{label}</div>
+      <div className="metric-value" style={{ fontSize: 18, color }}>{value}</div>
+      {hint && <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>{hint}</div>}
+    </div>
+  )
+}
+
+function TabCruzamentoDRE({ orders, suppliers, units }: {
+  orders: PurchaseOrder[]; suppliers: Supplier[]; units: Unit[]
+}) {
+  const now = new Date()
+  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [year, setYear] = useState(now.getFullYear())
+  const [unitId, setUnitId] = useState('')
+  const [dre, setDre] = useState<any>(null)
+  const [stock, setStock] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    const up = unitId ? `&unitId=${unitId}` : ''
+    Promise.all([
+      fetch(`/api/dre?month=${month}&year=${year}${up}`).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`/api/abc/estoque?month=${month}&year=${year}${up}`).then(r => r.json()).catch(() => []),
+    ]).then(([d, s]) => { setDre(d?.dre ?? null); setStock(Array.isArray(s) ? s : []); setLoading(false) })
+  }, [month, year, unitId])
+
+  const uid = unitId ? parseInt(unitId) : null
+  const inUnit = (u: number | null | undefined) => !uid || u === uid
+
+  // ── Compras ──
+  const monthOrders = orders.filter(o => o.month === month && o.year === year && o.status !== 'CANCELLED' && inUnit(o.unitId))
+  const comprasMes = monthOrders.reduce((a, o) => a + o.totalAmount, 0)
+  const recebidasMes = orders.filter(o =>
+    o.status === 'RECEIVED' && o.receivedDate &&
+    new Date(o.receivedDate).getMonth() + 1 === month && new Date(o.receivedDate).getFullYear() === year &&
+    inUnit(o.unitId)
+  ).reduce((a, o) => a + o.totalAmount, 0)
+
+  const openOrders = orders.filter(o => ['OPEN', 'PARTIAL', 'DRAFT'].includes(o.status) && inUnit(o.unitId))
+  const comprometido = openOrders.reduce((a, o) => a + o.totalAmount, 0)
+
+  // PMP ponderado pelo valor dos pedidos em aberto
+  let wSum = 0, wWeight = 0
+  openOrders.forEach(o => {
+    const term = suppliers.find(s => s.id === o.supplierId)?.paymentTermDays ?? 30
+    wSum += term * o.totalAmount; wWeight += o.totalAmount
+  })
+  const pmp = wWeight > 0 ? Math.round(wSum / wWeight) : 0
+
+  // ── DRE ──
+  const receitaLiq = dre?.receitaLiquida ?? 0
+  const cmv = (() => {
+    if (!dre?.lines) return 0
+    const l = dre.lines.find((x: any) => x.label === 'Custo do Produto/Serviço' && x.type === 'group')
+    return l ? Math.abs(l.value) : Math.max(0, receitaLiq - (dre?.margemContribuicao ?? 0))
+  })()
+  const margemBruta = receitaLiq - cmv
+  const hasDre = !!dre && receitaLiq > 0
+
+  // ── Estoque ──
+  const estoqueValor = stock.reduce((a, i) => a + (i.quantity || 0) * (i.unitCost || 0), 0)
+  const sm = estoqueValor > 0 && cmv > 0 ? calcStockMetrics(estoqueValor, cmv, margemBruta) : null
+
+  const pctStr = (v: number, base: number) => base > 0 ? `${((v / base) * 100).toFixed(1)}%` : '—'
+
+  const compareData = [
+    { name: 'Receita Líq.', valor: receitaLiq },
+    { name: 'CMV', valor: cmv },
+    { name: 'Compras', valor: comprasMes },
+    { name: 'Margem Bruta', valor: margemBruta },
+  ]
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
+        <select className="form-select" style={{ width: 150 }} value={unitId} onChange={e => setUnitId(e.target.value)}>
+          <option value="">Consolidado</option>
+          {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </select>
+        <select className="form-select" style={{ width: 120 }} value={month} onChange={e => setMonth(+e.target.value)}>
+          {MONTH_NAMES.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+        </select>
+        <select className="form-select" style={{ width: 90 }} value={year} onChange={e => setYear(+e.target.value)}>
+          {[2023, 2024, 2025, 2026].map(y => <option key={y}>{y}</option>)}
+        </select>
+        <span style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Indicadores de compras cruzados com a DRE do período</span>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--brave-gray)' }}>Carregando...</div>
+      ) : !hasDre ? (
+        <div className="card" style={{ textAlign: 'center', padding: 60 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>📉</div>
+          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600 }}>
+            Sem DRE para {MONTH_NAMES[month]}/{year}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--brave-gray)', marginTop: 6 }}>
+            Classifique lançamentos em Lançamentos/OFX para gerar a DRE e habilitar o cruzamento.
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Linha DRE */}
+          <div className="metrics-grid mb-6" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+            <KPI label="Receita Líquida" value={fmt(receitaLiq)} hint="da DRE" />
+            <KPI label="CMV" value={fmt(cmv)} hint={`${pctStr(cmv, receitaLiq)} da receita`} color="#c0392b" />
+            <KPI label="Margem Bruta" value={fmt(margemBruta)} hint={`${pctStr(margemBruta, receitaLiq)} da receita`} color={margemBruta >= 0 ? '#1a7a4a' : '#c0392b'} />
+            <KPI label="Compras do mês" value={fmt(comprasMes)} hint={`${monthOrders.length} pedido(s)`} />
+          </div>
+
+          {/* Representatividade */}
+          <div className="card mb-6">
+            <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 16 }}>
+              Representatividade das Compras
+            </div>
+            <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+              <KPI label="Compras vs CMV" value={pctStr(comprasMes, cmv)}
+                hint="pedidos do mês sobre o CMV — >100% sugere formação de estoque; <100%, venda de estoque" />
+              <KPI label="Compras % da Receita" value={pctStr(comprasMes, receitaLiq)}
+                hint="volume comprado sobre a receita líquida" />
+              <KPI label="Recebido no mês" value={fmt(recebidasMes)}
+                hint="pedidos efetivamente recebidos (entrada de estoque)" />
+            </div>
+          </div>
+
+          {/* Comparativo */}
+          <div className="grid-2 mb-6">
+            <div className="card">
+              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 16 }}>
+                Receita × CMV × Compras × Margem
+              </div>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={compareData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number) => fmt(v)} />
+                  <Bar dataKey="valor" radius={[4, 4, 0, 0]}>
+                    {compareData.map((e, i) => (
+                      <Cell key={i} fill={['#2b2d42', '#c0392b', '#8d99ae', '#1a7a4a'][i]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Fluxo / compromisso */}
+            <div className="card">
+              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 16 }}>
+                Compromisso de Caixa e Pagamento
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--brave-light)', borderRadius: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Comprometido (pedidos em aberto)</span>
+                  <span style={{ fontWeight: 700, fontSize: 14, color: '#c0392b' }}>{fmt(comprometido)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--brave-light)', borderRadius: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Prazo médio de pagamento (ponderado)</span>
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>{pmp > 0 ? `${pmp} dias` : '—'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--brave-light)', borderRadius: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Pedidos em aberto</span>
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>{openOrders.length}</span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 4, lineHeight: 1.5 }}>
+                  O valor comprometido é o total de pedidos ainda não recebidos — a pagar aos fornecedores, distribuído conforme o prazo médio acima. Compare com o saldo bancário para antecipar necessidade de caixa.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Estoque × DRE */}
+          <div className="card">
+            <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
+              Estoque × DRE
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>
+              {sm
+                ? 'Giro, cobertura e GMROI a partir do valor de estoque (planilha da Curva ABC) e do CMV/margem da DRE'
+                : 'Importe a planilha de estoque do mês na aba Curva ABC → Estoque para calcular giro, cobertura e GMROI.'}
+            </div>
+            {sm && (
+              <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+                <KPI label="Valor em Estoque" value={fmt(sm.estoqueValor)} hint="a custo (planilha)" />
+                <KPI label="Giro de Estoque" value={sm.giro != null ? `${sm.giro.toFixed(2)}×` : '—'} hint="CMV ÷ estoque" />
+                <KPI label="Cobertura" value={sm.coberturaDias != null ? `${Math.round(sm.coberturaDias)} dias` : '—'} hint="autonomia do estoque" />
+                <KPI label="GMROI" value={sm.gmroi != null ? sm.gmroi.toFixed(2) : '—'} hint="margem por R$ investido" color={sm.gmroi != null && sm.gmroi >= 1 ? '#1a7a4a' : '#c0392b'} />
+              </div>
+            )}
+          </div>
+        </>
       )}
     </>
   )

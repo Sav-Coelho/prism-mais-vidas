@@ -21,6 +21,13 @@ export interface DREData {
   lucroAposInvestimentos: number
   lucroAntesImpostos: number
   resultadoLiquido: number
+  // Pontos de equilíbrio (receita mínima) e % da margem de contribuição
+  peo: number                   // Ponto de Equilíbrio Operacional
+  pei: number                   // Ponto de Equilíbrio de Investimentos
+  pef: number                   // Ponto de Equilíbrio Financeiro
+  mcPct: number                 // margem de contribuição / receita operacional
+  custosFixos: number
+  investimentos: number
 }
 
 interface AccEntry { name: string; code: string; value: number }
@@ -185,6 +192,9 @@ export function calcDRE(
     lucroAposInvestimentos: lucroAposInv,
     lucroAntesImpostos: lucroAntesIR,
     resultadoLiquido: lucroLiq,
+    peo, pei, pef, mcPct,
+    custosFixos,
+    investimentos: invest,
   }
 }
 

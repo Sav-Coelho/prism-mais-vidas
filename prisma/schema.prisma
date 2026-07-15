@@ -17,6 +17,8 @@ model Unit {
   clients        Client[]
   sales          Sale[]
   purchaseOrders PurchaseOrder[]
+  salesRecords   SalesRecord[]
+  stockItems     StockItem[]
 }
 
 model BankAccount {
@@ -141,4 +143,41 @@ model PurchaseItem {
   unitPrice   Float
   receivedQty Float         @default(0)
   notes       String?
+}
+
+// Vendas importadas por planilha mensal — alimenta a Curva ABC de Vendas.
+// Uma linha por produto por mês/ano/unidade. Re-upload do mesmo período substitui.
+model SalesRecord {
+  id        Int      @id @default(autoincrement())
+  product   String
+  sku       String?
+  category  String?
+  quantity  Float    @default(0)
+  revenue   Float    @default(0)
+  cost      Float    @default(0)
+  unitId    Int?
+  unit      Unit?    @relation(fields: [unitId], references: [id])
+  month     Int
+  year      Int
+  createdAt DateTime @default(now())
+
+  @@index([month, year])
+}
+
+// Posição de estoque importada por planilha mensal — alimenta a Curva ABC de
+// Estoque e os indicadores de giro/cobertura/GMROI (cruzados com o CMV da DRE).
+model StockItem {
+  id        Int      @id @default(autoincrement())
+  product   String
+  sku       String?
+  category  String?
+  quantity  Float    @default(0)
+  unitCost  Float    @default(0)
+  unitId    Int?
+  unit      Unit?    @relation(fields: [unitId], references: [id])
+  month     Int
+  year      Int
+  createdAt DateTime @default(now())
+
+  @@index([month, year])
 }

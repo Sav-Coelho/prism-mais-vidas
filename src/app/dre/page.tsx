@@ -149,6 +149,41 @@ export default function DREPage() {
             ))}
           </div>
 
+          {/* Pontos de Equilíbrio */}
+          <div className="card mb-6">
+            <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
+              Pontos de Equilíbrio — {MONTH_NAMES[month]}/{year}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>
+              Receita mínima necessária para zerar o resultado em cada nível · Margem de contribuição: {(dre.mcPct * 100).toFixed(1)}% da receita
+            </div>
+            {dre.mcPct > 0 ? (
+              <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                {[
+                  { sigla: 'PEO', label: 'Ponto de Equilíbrio Operacional', value: dre.peo, hint: 'cobre os custos fixos', achieved: dre.receitaBruta >= dre.peo },
+                  { sigla: 'PEI', label: 'Ponto de Equilíbrio de Investimentos', value: dre.pei, hint: 'cobre custos fixos + investimentos', achieved: dre.receitaBruta >= dre.pei },
+                  { sigla: 'PEF', label: 'Ponto de Equilíbrio Financeiro', value: dre.pef, hint: 'cobre tudo + desembolsos não operacionais', achieved: dre.receitaBruta >= dre.pef, highlight: true },
+                ].map(pe => (
+                  <div key={pe.sigla} className="metric-card" style={pe.highlight ? { border: '2px solid var(--brave-yellow)' } : undefined}>
+                    <div className="metric-accent" style={{ background: pe.achieved ? '#1a7a4a' : '#c0392b' }} />
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 13 }}>{pe.sigla}</span>
+                      <span style={{ fontSize: 10, color: pe.achieved ? '#1a7a4a' : '#c0392b', fontWeight: 600 }}>
+                        {pe.achieved ? '✓ atingido' : '✗ não atingido'}
+                      </span>
+                    </div>
+                    <div className="metric-value" style={{ fontSize: 17 }}>{fmt(pe.value)}</div>
+                    <div style={{ fontSize: 10, color: 'var(--brave-gray)', marginTop: 2 }}>{pe.label} — {pe.hint}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: 'var(--brave-gray)', padding: '8px 0' }}>
+                Margem de contribuição não positiva no período — o ponto de equilíbrio não é calculável (a operação não cobre os custos variáveis).
+              </div>
+            )}
+          </div>
+
           <div className="grid-2 mb-6">
             {/* DRE Estruturado */}
             <div className="card" style={{ overflowY: 'auto', maxHeight: 680, padding: 0 }}>
