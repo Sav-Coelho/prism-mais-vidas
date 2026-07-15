@@ -966,7 +966,7 @@ function TabCruzamentoDRE({ orders, suppliers, units }: {
             <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>
               {sm
                 ? 'Giro, cobertura e GMROI a partir do valor de estoque (planilha da Curva ABC) e do CMV/margem da DRE'
-                : 'Importe a planilha de estoque do mês na aba Curva ABC → Estoque para calcular giro, cobertura e GMROI.'}
+                : 'Para giro/GMROI em R$, a planilha de estoque precisa ter o custo unitário. O giro por quantidade (vendido ÷ estoque) está na aba Curva ABC → Estoque.'}
             </div>
             {sm && (
               <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
