@@ -25,6 +25,7 @@ export default function MargemContribuicaoPage() {
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [year, setYear] = useState(now.getFullYear())
   const [products, setProducts] = useState<any[]>([])
+  const [salesData, setSalesData] = useState<any[]>([])
   const [dre, setDre] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -40,9 +41,11 @@ export default function MargemContribuicaoPage() {
     Promise.all([
       fetch(`/api/margem?month=${month}&year=${year}${unitParam}`).then(r => r.json()),
       fetch(`/api/dre?month=${month}&year=${year}${unitParam}`).then(r => r.ok ? r.json() : null).catch(() => null),
-    ]).then(([p, d]) => {
+      fetch(`/api/abc/vendas?month=${month}&year=${year}${unitParam}`).then(r => r.json()).catch(() => []),
+    ]).then(([p, d, s]) => {
       setProducts(Array.isArray(p) ? p : [])
       setDre(d?.dre ?? null)
+      setSalesData(Array.isArray(s) ? s : [])
       setLoading(false)
     })
   }
@@ -72,20 +75,37 @@ export default function MargemContribuicaoPage() {
     setUploading(false)
   }
 
-  // Rateio da DRE do período
+  // Rateio a partir da DRE: admin% e financeiro% sobre a Receita Operacional Bruta.
+  // Cada produto carrega esse % aplicado ao seu preço (rateio por participação na receita).
   const adminTotal = dreGroup(dre, 'Despesas Administrativas')
   const financialTotal = dreGroup(dre, 'Despesas Financeiras')
+  const receitaBase = dre?.receitaBruta ?? 0
+  const adminPct = receitaBase > 0 ? adminTotal / receitaBase : 0
+  const financialPct = receitaBase > 0 ? financialTotal / receitaBase : 0
 
   const analysis = useMemo(() => {
-    const totalRevenue = products.reduce((a, p) => a + (p.salePrice || 0) * (p.quantity || 0), 0)
-    const rows = products.map(p => {
+    // Quantidade vendida vem do relatório de Saída (Bling) já importado, casada por Código/nome
+    const qtyMap = new Map<string, number>()
+    salesData.forEach((s: any) => {
+      const sku = String(s.sku || '').toLowerCase().trim()
+      const name = String(s.product || '').toLowerCase().trim()
+      if (sku) qtyMap.set('s:' + sku, (qtyMap.get('s:' + sku) || 0) + (s.quantity || 0))
+      if (name) qtyMap.set('n:' + name, (qtyMap.get('n:' + name) || 0) + (s.quantity || 0))
+    })
+    const lookupQty = (p: any): number => {
+      const sku = String(p.sku || '').toLowerCase().trim()
+      const name = String(p.product || '').toLowerCase().trim()
+      if (sku && qtyMap.has('s:' + sku)) return qtyMap.get('s:' + sku)!
+      if (name && qtyMap.has('n:' + name)) return qtyMap.get('n:' + name)!
+      return p.quantity || 0
+    }
+
+    const rows = products.map((p: any) => {
       const price = p.salePrice || 0
       const cost = p.replacementCost || 0
-      const qty = p.quantity || 0
-      // rateio por participação na receita, convertido em custo por unidade:
-      // RA/un = adminTotal * (preço / receitaTotal) ; idem para financeiro
-      const raUnit = totalRevenue > 0 ? adminTotal * price / totalRevenue : 0
-      const cfUnit = totalRevenue > 0 ? financialTotal * price / totalRevenue : 0
+      const qty = lookupQty(p)
+      const raUnit = adminPct * price
+      const cfUnit = financialPct * price
       const mcUnit = price - (cost + raUnit + cfUnit)
       const mcPct = price > 0 ? mcUnit / price : 0
       const mcTotal = mcUnit * qty
@@ -94,30 +114,39 @@ export default function MargemContribuicaoPage() {
         id: p.id, product: p.product, sku: p.sku, category: p.category || 'Sem categoria',
         price, cost, qty, raUnit, cfUnit, mcUnit, mcPct, mcTotal, revenue,
       }
-    }).sort((a, b) => b.mcTotal - a.mcTotal)
+    })
 
+    const anyQty = rows.some(r => r.qty > 0)
+    rows.sort((a, b) => anyQty ? b.mcTotal - a.mcTotal : b.mcPct - a.mcPct)
+
+    const totalRevenue = rows.reduce((a, r) => a + r.revenue, 0)
     const totalMC = rows.reduce((a, r) => a + r.mcTotal, 0)
-    const avgMcPct = totalRevenue > 0 ? totalMC / totalRevenue : 0
+    const avgMcPct = totalRevenue > 0
+      ? totalMC / totalRevenue
+      : (rows.length > 0 ? rows.reduce((a, r) => a + r.mcPct, 0) / rows.length : 0)
     const negativos = rows.filter(r => r.mcUnit < 0)
 
-    // Por categoria
-    const catMap: Record<string, { revenue: number; mc: number }> = {}
+    // Por categoria (MC% ponderada quando há qtd; senão média simples)
+    const catMap: Record<string, { revenue: number; mc: number; pctSum: number; n: number }> = {}
     rows.forEach(r => {
-      if (!catMap[r.category]) catMap[r.category] = { revenue: 0, mc: 0 }
+      if (!catMap[r.category]) catMap[r.category] = { revenue: 0, mc: 0, pctSum: 0, n: 0 }
       catMap[r.category].revenue += r.revenue
       catMap[r.category].mc += r.mcTotal
+      catMap[r.category].pctSum += r.mcPct
+      catMap[r.category].n += 1
     })
     const byCategory = Object.keys(catMap).map(c => ({
-      category: c, mc: catMap[c].mc,
-      mcPct: catMap[c].revenue > 0 ? catMap[c].mc / catMap[c].revenue : 0,
-    })).sort((a, b) => b.mc - a.mc)
+      category: c,
+      mc: catMap[c].mc,
+      mcPct: catMap[c].revenue > 0 ? catMap[c].mc / catMap[c].revenue : (catMap[c].n > 0 ? catMap[c].pctSum / catMap[c].n : 0),
+    })).sort((a, b) => b.mcPct - a.mcPct)
 
-    return { rows, totalRevenue, totalMC, avgMcPct, negativos, byCategory }
-  }, [products, adminTotal, financialTotal])
+    return { rows, totalRevenue, totalMC, avgMcPct, negativos, byCategory, anyQty }
+  }, [products, salesData, adminPct, financialPct])
 
   const hasData = products.length > 0
-  const hasQty = products.some(p => (p.quantity || 0) > 0)
-  const hasRateio = (adminTotal > 0 || financialTotal > 0) && analysis.totalRevenue > 0
+  const hasQty = analysis.anyQty
+  const hasRateio = (adminTotal > 0 || financialTotal > 0) && receitaBase > 0
 
   return (
     <Shell>
@@ -175,14 +204,14 @@ export default function MargemContribuicaoPage() {
       ) : (
         <>
           {/* Avisos de rateio */}
-          {!hasQty && (
+          {!hasRateio && (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#fffbea', border: '1px solid #f0c040', fontSize: 12, color: '#7a5c00' }}>
-              ⚠ A planilha não tem quantidade vendida — o rateio por participação na receita fica prejudicado e a MC total não pondera volume. Inclua a coluna de quantidade para o cálculo completo.
+              ⚠ Sem Despesas Administrativas/Financeiras (ou sem receita) na DRE de {MONTH_NAMES[month]}/{year} — a MC está considerando apenas <strong>Preço − Custo de Reposição</strong> (sem rateio). Classifique essas despesas na DRE para o cálculo completo.
             </div>
           )}
-          {!hasRateio && hasQty && (
-            <div className="card mb-4" style={{ padding: '10px 16px', background: '#fffbea', border: '1px solid #f0c040', fontSize: 12, color: '#7a5c00' }}>
-              ⚠ Sem Despesas Administrativas/Financeiras na DRE de {MONTH_NAMES[month]}/{year} — a MC está considerando apenas Preço − Custo de Reposição (sem rateio). Classifique essas despesas na DRE para o cálculo completo.
+          {!hasQty && (
+            <div className="card mb-4" style={{ padding: '10px 16px', background: '#eef4fb', border: '1px solid #a9c7e8', fontSize: 12, color: '#2b5a8c' }}>
+              ℹ Sem quantidade vendida para o período — MC/un e MC% estão corretas, mas a <strong>MC total</strong> e o ranking por contribuição ficam zerados. Importe o Relatório de Saída de Produtos (Bling) do mês na aba <strong>Curva ABC</strong> para casar o volume por Código.
             </div>
           )}
 
@@ -218,15 +247,15 @@ export default function MargemContribuicaoPage() {
               <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
                 Margem de Contribuição por Categoria
               </div>
-              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>Contribuição total (R$) — verde positivo, vermelho negativo</div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>MC% por categoria — verde positivo, vermelho negativo</div>
               <ResponsiveContainer width="100%" height={Math.max(180, analysis.byCategory.length * 34)}>
                 <BarChart data={analysis.byCategory} layout="vertical" margin={{ left: 10, right: 16 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eee" horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                  <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => `${(v * 100).toFixed(0)}%`} />
                   <YAxis type="category" dataKey="category" tick={{ fontSize: 10 }} width={110} />
-                  <Tooltip formatter={(v: number, _n: string, item: any) => [`${fmt(v)} · ${pctStr(item?.payload?.mcPct ?? 0)}`, 'MC']} />
-                  <Bar dataKey="mc" radius={[0, 4, 4, 0]} barSize={20}>
-                    {analysis.byCategory.map((c, i) => <Cell key={i} fill={c.mc >= 0 ? '#1a7a4a' : '#c0392b'} />)}
+                  <Tooltip formatter={(v: number, _n: string, item: any) => [`${pctStr(v)}${item?.payload?.mc ? ` · ${fmt(item.payload.mc)}` : ''}`, 'MC']} />
+                  <Bar dataKey="mcPct" radius={[0, 4, 4, 0]} barSize={20}>
+                    {analysis.byCategory.map((c, i) => <Cell key={i} fill={c.mcPct >= 0 ? '#1a7a4a' : '#c0392b'} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
