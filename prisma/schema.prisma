@@ -19,6 +19,7 @@ model Unit {
   purchaseOrders PurchaseOrder[]
   salesRecords   SalesRecord[]
   stockItems     StockItem[]
+  marginProducts MarginProduct[]
 }
 
 model BankAccount {
@@ -178,6 +179,27 @@ model StockItem {
   month     Int
   year      Int
   createdAt DateTime @default(now())
+
+  @@index([month, year])
+}
+
+// Produtos com preço e custo de reposição importados por planilha mensal — base
+// da Análise de Margem de Contribuição por produto. O rateio de Despesas
+// Administrativas e Financeiras é calculado em runtime a partir da DRE do período
+// (participação na receita), não é armazenado aqui.
+model MarginProduct {
+  id              Int      @id @default(autoincrement())
+  product         String
+  sku             String?
+  category        String?
+  salePrice       Float    @default(0)
+  replacementCost Float    @default(0)
+  quantity        Float    @default(0)
+  unitId          Int?
+  unit            Unit?    @relation(fields: [unitId], references: [id])
+  month           Int
+  year            Int
+  createdAt       DateTime @default(now())
 
   @@index([month, year])
 }
