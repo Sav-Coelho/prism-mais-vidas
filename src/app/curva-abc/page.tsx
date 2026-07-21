@@ -54,11 +54,13 @@ export default function CurvaABCPage() {
     fd.append('month', String(month))
     fd.append('year', String(year))
     if (unitId) fd.append('unitId', unitId)
+    const endpoint = tab === 'vendas' ? '/api/abc/import' : '/api/abc/inventario'
     try {
-      const res = await fetch('/api/abc/import', { method: 'POST', body: fd })
+      const res = await fetch(endpoint, { method: 'POST', body: fd })
       const data = await res.json()
       if (res.ok) {
-        showToast(`✓ ${data.salesImported} produtos vendidos · ${data.stockImported} itens em estoque importados`)
+        const extra = data.semCusto > 0 ? ` · ${data.semCusto} sem custo` : ''
+        showToast(`✓ ${data.imported} ${tab === 'vendas' ? 'produtos vendidos' : 'itens em estoque'} importados${extra}`)
         load()
       } else {
         showToast(`Erro: ${data.error}`)
@@ -147,7 +149,21 @@ export default function CurvaABCPage() {
         </div>
       </div>
 
-      {/* Upload único — alimenta Vendas e Estoque */}
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {(['vendas', 'estoque'] as Tab[]).map(t => (
+          <button key={t} onClick={() => setTab(t)} style={{
+            padding: '8px 18px', border: 'none', borderRadius: 6, cursor: 'pointer',
+            fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13,
+            background: tab === t ? 'var(--brave-yellow)' : 'var(--brave-light)',
+            color: tab === t ? 'var(--brave-dark)' : 'var(--brave-gray)',
+          }}>
+            {t === 'vendas' ? '🏷️ Vendas' : '📦 Estoque'}
+          </button>
+        ))}
+      </div>
+
+      {/* Upload — específico da aba ativa */}
       <div
         className={`upload-zone mb-6 ${drag ? 'drag' : ''}`}
         onDragOver={e => { e.preventDefault(); setDrag(true) }}
@@ -159,26 +175,16 @@ export default function CurvaABCPage() {
           onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = '' }} />
         <div className="upload-icon">{uploading ? '⏳' : '📄'}</div>
         <div className="upload-title">
-          {uploading ? 'Importando...' : `Importar Relatório de Saída de Produtos — ${MONTH_NAMES[month]}/${year}`}
+          {uploading ? 'Importando...' : tab === 'vendas'
+            ? `Importar Relatório de Saída de Produtos (Bling) — ${MONTH_NAMES[month]}/${year}`
+            : `Importar Inventário (com custo) — ${MONTH_NAMES[month]}/${year}`}
         </div>
         <div className="upload-sub">
-          Planilha do Bling (Código · Produto · Quantidade Total · Estoque atual). Alimenta <strong>Vendas</strong> e <strong>Estoque</strong> de uma vez.
-          <br />Reenviar o mesmo mês substitui os dados anteriores.
+          {tab === 'vendas'
+            ? <>Colunas: <strong>Código · Produto · Quantidade Total</strong>. Alimenta a ABC de <strong>Vendas</strong> (unidades vendidas).</>
+            : <>Colunas: <strong>Código · Produto · Preço de Custo · Qtd. Estoque</strong>. Alimenta a ABC de <strong>Estoque em R$</strong> e o giro/cobertura/GMROI.</>}
+          <br />Reenviar o mesmo mês substitui os dados desta aba.
         </div>
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {(['vendas', 'estoque'] as Tab[]).map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{
-            padding: '8px 18px', border: 'none', borderRadius: 6, cursor: 'pointer',
-            fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13,
-            background: tab === t ? 'var(--brave-yellow)' : 'var(--brave-light)',
-            color: tab === t ? 'var(--brave-dark)' : 'var(--brave-gray)',
-          }}>
-            {t === 'vendas' ? '🏷️ Vendas' : '📦 Estoque'}
-          </button>
-        ))}
       </div>
 
       {loading ? (
