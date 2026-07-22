@@ -1,7 +1,6 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Shell from '@/components/Shell'
-import { MONTH_NAMES } from '@/lib/dre'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts'
@@ -22,8 +21,7 @@ function dreGroup(dre: any, label: string): number {
 export default function MargemContribuicaoPage() {
   const [units, setUnits] = useState<any[]>([])
   const [unitId, setUnitId] = useState('')
-  const [month, setMonth] = useState(now.getMonth() + 1)
-  const [year, setYear] = useState(now.getFullYear())
+  const [year, setYear] = useState(now.getFullYear())  // ano de referência p/ rateio e volume
   const [products, setProducts] = useState<any[]>([])
   const [salesData, setSalesData] = useState<any[]>([])
   const [dre, setDre] = useState<any>(null)
@@ -39,9 +37,10 @@ export default function MargemContribuicaoPage() {
   const load = () => {
     setLoading(true)
     Promise.all([
-      fetch(`/api/margem?month=${month}&year=${year}${unitParam}`).then(r => r.json()),
-      fetch(`/api/dre?month=${month}&year=${year}${unitParam}`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`/api/abc/vendas?month=${month}&year=${year}${unitParam}`).then(r => r.json()).catch(() => []),
+      // catálogo GERAL (sem período); DRE consolidada do ano (month=0) p/ rateio; vendas do ano p/ volume
+      fetch(`/api/margem?${unitId ? `unitId=${unitId}` : ''}`).then(r => r.json()),
+      fetch(`/api/dre?month=0&year=${year}${unitParam}`).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`/api/abc/vendas?year=${year}${unitParam}`).then(r => r.json()).catch(() => []),
     ]).then(([p, d, s]) => {
       setProducts(Array.isArray(p) ? p : [])
       setDre(d?.dre ?? null)
@@ -50,14 +49,12 @@ export default function MargemContribuicaoPage() {
     })
   }
   useEffect(() => { fetch('/api/units').then(r => r.json()).then(setUnits) }, [])
-  useEffect(() => { load() }, [month, year, unitId])
+  useEffect(() => { load() }, [year, unitId])
 
   const upload = async (file: File) => {
     setUploading(true)
     const fd = new FormData()
     fd.append('file', file)
-    fd.append('month', String(month))
-    fd.append('year', String(year))
     if (unitId) fd.append('unitId', unitId)
     try {
       const res = await fetch('/api/margem', { method: 'POST', body: fd })
@@ -153,16 +150,14 @@ export default function MargemContribuicaoPage() {
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">Margem de Contribuição</h1>
-          <p className="page-subtitle">Análise por produto — MC = (Preço − (Custo Reposição + Rateio Adm. + Financeiro)) ÷ Preço</p>
+          <p className="page-subtitle">Análise geral por produto — MC = (Preço − (Custo Reposição + Rateio Adm. + Financeiro)) ÷ Preço</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2" style={{ alignItems: 'center' }}>
           <select className="form-select" style={{ width: 150 }} value={unitId} onChange={e => setUnitId(e.target.value)}>
             <option value="">Todas as unidades</option>
             {units.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
-          <select className="form-select" style={{ width: 120 }} value={month} onChange={e => setMonth(+e.target.value)}>
-            {MONTH_NAMES.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
-          </select>
+          <span style={{ fontSize: 11, color: 'var(--brave-gray)' }}>Referência (rateio/volume):</span>
           <select className="form-select" style={{ width: 90 }} value={year} onChange={e => setYear(+e.target.value)}>
             {[2023, 2024, 2025, 2026].map(y => <option key={y}>{y}</option>)}
           </select>
@@ -181,11 +176,11 @@ export default function MargemContribuicaoPage() {
           onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = '' }} />
         <div className="upload-icon">{uploading ? '⏳' : '📄'}</div>
         <div className="upload-title">
-          {uploading ? 'Importando...' : `Importar planilha de produtos — ${MONTH_NAMES[month]}/${year}`}
+          {uploading ? 'Importando...' : 'Importar catálogo de produtos (preço e custo)'}
         </div>
         <div className="upload-sub">
-          Colunas: <strong>Produto · Preço de Venda</strong> (obrigatórias) · Custo de Reposição · Qtd vendida · SKU · Categoria (opcionais).
-          <br />O rateio de Despesas Administrativas e Financeiras vem da DRE do mês. Reenviar substitui os dados.
+          Colunas: <strong>Código · Produto · Preço de Venda · Preço de custo</strong>. Catálogo <strong>geral</strong> — cada upload substitui o anterior.
+          <br />O rateio (Desp. Adm./Financeiras) e o volume vendido vêm da referência de ano selecionada acima.
         </div>
       </div>
 
@@ -195,10 +190,10 @@ export default function MargemContribuicaoPage() {
         <div className="card" style={{ textAlign: 'center', padding: 60 }}>
           <div style={{ fontSize: 36, marginBottom: 12 }}>🎯</div>
           <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 15 }}>
-            Sem produtos para {MONTH_NAMES[month]}/{year}
+            Nenhum produto no catálogo
           </div>
           <div style={{ color: 'var(--brave-gray)', fontSize: 13, marginTop: 6 }}>
-            Importe a planilha do mês acima para calcular a margem de contribuição.
+            Importe o catálogo de preço/custo acima para calcular a margem de contribuição.
           </div>
         </div>
       ) : (
@@ -206,12 +201,12 @@ export default function MargemContribuicaoPage() {
           {/* Avisos de rateio */}
           {!hasRateio && (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#fffbea', border: '1px solid #f0c040', fontSize: 12, color: '#7a5c00' }}>
-              ⚠ Sem Despesas Administrativas/Financeiras (ou sem receita) na DRE de {MONTH_NAMES[month]}/{year} — a MC está considerando apenas <strong>Preço − Custo de Reposição</strong> (sem rateio). Classifique essas despesas na DRE para o cálculo completo.
+              ⚠ Sem Despesas Administrativas/Financeiras (ou sem receita) na DRE consolidada de {year} — a MC está considerando apenas <strong>Preço − Custo de Reposição</strong> (sem rateio). Classifique essas despesas na DRE para o cálculo completo.
             </div>
           )}
           {!hasQty && (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#eef4fb', border: '1px solid #a9c7e8', fontSize: 12, color: '#2b5a8c' }}>
-              ℹ Sem quantidade vendida para o período — MC/un e MC% estão corretas, mas a <strong>MC total</strong> e o ranking por contribuição ficam zerados. Importe o Relatório de Saída de Produtos (Bling) do mês na aba <strong>Curva ABC</strong> para casar o volume por Código.
+              ℹ Sem quantidade vendida em {year} — MC/un e MC% estão corretas, mas a <strong>MC total</strong> e o ranking por contribuição ficam zerados. Importe o Relatório de Saída de Produtos (Bling) na aba <strong>Curva ABC</strong> para casar o volume por Código.
             </div>
           )}
 

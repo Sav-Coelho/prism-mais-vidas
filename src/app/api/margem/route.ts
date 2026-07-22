@@ -19,14 +19,11 @@ const CATEGORY_NAMES = ['categoria', 'grupo', 'família', 'familia', 'linha', 'd
 const CATEGORY_RE = /^(.+?)\s*\(\s*\d+\s*ite[mn]s?\s*\)\s*$/i
 
 export async function GET(req: NextRequest) {
+  // Catálogo GERAL de margem (não é por período). Filtra só por unidade se informada.
   const { searchParams } = new URL(req.url)
-  const month = searchParams.get('month')
-  const year = searchParams.get('year')
   const unitId = searchParams.get('unitId')
 
   const where: Record<string, unknown> = {}
-  if (month) where.month = parseInt(month)
-  if (year) where.year = parseInt(year)
   if (unitId) where.unitId = parseInt(unitId)
 
   const products = await prisma.marginProduct.findMany({ where, orderBy: { salePrice: 'desc' } })
@@ -34,15 +31,14 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Catálogo GERAL: não é por período. Armazena month=0/year=0 e substitui todo o
+  // catálogo (opcionalmente escopado por unidade) a cada upload.
   const formData = await req.formData()
   const file = formData.get('file') as File | null
-  const month = parseInt(String(formData.get('month') || ''))
-  const year = parseInt(String(formData.get('year') || ''))
   const unitRaw = formData.get('unitId')
   const unitId = unitRaw ? parseInt(String(unitRaw)) : null
 
   if (!file) return NextResponse.json({ error: 'Arquivo não enviado' }, { status: 400 })
-  if (!month || !year) return NextResponse.json({ error: 'Mês e ano são obrigatórios' }, { status: 400 })
 
   let matrix: string[][]
   try {
@@ -107,7 +103,7 @@ export async function POST(req: NextRequest) {
       salePrice,
       replacementCost: isNaN(replacementCost) ? 0 : replacementCost,
       quantity: isNaN(quantity) ? 0 : quantity,
-      unitId, month, year,
+      unitId, month: 0, year: 0,
     })
   }
 
@@ -116,7 +112,7 @@ export async function POST(req: NextRequest) {
   }
 
   await prisma.$transaction([
-    prisma.marginProduct.deleteMany({ where: { month, year, unitId } }),
+    prisma.marginProduct.deleteMany({ where: { unitId } }),
     prisma.marginProduct.createMany({ data: products }),
   ])
 
