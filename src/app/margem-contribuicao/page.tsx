@@ -73,12 +73,10 @@ export default function MargemContribuicaoPage() {
   }
 
   // Rateio a partir da DRE: admin% e financeiro% sobre a Receita Operacional Bruta.
-  // Cada produto carrega esse % aplicado ao seu preço (rateio por participação na receita).
-  const adminTotal = dreGroup(dre, 'Despesas Administrativas')
-  const financialTotal = dreGroup(dre, 'Despesas Financeiras')
-  const receitaBase = dre?.receitaBruta ?? 0
-  const adminPct = receitaBase > 0 ? adminTotal / receitaBase : 0
-  const financialPct = receitaBase > 0 ? financialTotal / receitaBase : 0
+  // Custo Rateado = TODAS as despesas operacionais da DRE consolidada do ano de referência,
+  // distribuídas como valor FIXO por unidade vendida (opex total ÷ unidades vendidas).
+  const OPEX_GROUPS = ['Despesas Administrativas', 'Despesas com Pessoal', 'Despesas com Marketing', 'Despesas Comerciais', 'Despesas Financeiras']
+  const opexTotal = OPEX_GROUPS.reduce((s, g) => s + dreGroup(dre, g), 0)
 
   const analysis = useMemo(() => {
     // Quantidade vendida vem do relatório de Saída (Bling) já importado, casada por Código/nome
@@ -97,19 +95,21 @@ export default function MargemContribuicaoPage() {
       return p.quantity || 0
     }
 
+    // Rateio fixo por unidade = opex total ÷ total de unidades vendidas
+    const totalUnits = salesData.reduce((a: number, s: any) => a + (s.quantity || 0), 0)
+    const rateioUnit = totalUnits > 0 ? opexTotal / totalUnits : 0
+
     const rows = products.map((p: any) => {
       const price = p.salePrice || 0
       const cost = p.replacementCost || 0
       const qty = lookupQty(p)
-      const raUnit = adminPct * price
-      const cfUnit = financialPct * price
-      const mcUnit = price - (cost + raUnit + cfUnit)
+      const mcUnit = price - (cost + rateioUnit)
       const mcPct = price > 0 ? mcUnit / price : 0
       const mcTotal = mcUnit * qty
       const revenue = price * qty
       return {
         id: p.id, product: p.product, sku: p.sku, category: p.category || 'Sem categoria',
-        price, cost, qty, raUnit, cfUnit, mcUnit, mcPct, mcTotal, revenue,
+        price, cost, qty, rateio: rateioUnit, mcUnit, mcPct, mcTotal, revenue,
       }
     })
 
@@ -138,19 +138,19 @@ export default function MargemContribuicaoPage() {
       mcPct: catMap[c].revenue > 0 ? catMap[c].mc / catMap[c].revenue : (catMap[c].n > 0 ? catMap[c].pctSum / catMap[c].n : 0),
     })).sort((a, b) => b.mcPct - a.mcPct)
 
-    return { rows, totalRevenue, totalMC, avgMcPct, negativos, byCategory, anyQty }
-  }, [products, salesData, adminPct, financialPct])
+    return { rows, totalRevenue, totalMC, avgMcPct, negativos, byCategory, anyQty, rateioUnit, totalUnits }
+  }, [products, salesData, opexTotal])
 
   const hasData = products.length > 0
   const hasQty = analysis.anyQty
-  const hasRateio = (adminTotal > 0 || financialTotal > 0) && receitaBase > 0
+  const hasRateio = opexTotal > 0 && analysis.totalUnits > 0
 
   return (
     <Shell>
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">Margem de Contribuição</h1>
-          <p className="page-subtitle">Análise geral por produto — MC = (Preço − (Custo Reposição + Rateio Adm. + Financeiro)) ÷ Preço</p>
+          <p className="page-subtitle">Análise geral por produto — MC = (Preço − (Custo de Reposição + Rateio operacional/un)) ÷ Preço</p>
         </div>
         <div className="flex gap-2" style={{ alignItems: 'center' }}>
           <select className="form-select" style={{ width: 150 }} value={unitId} onChange={e => setUnitId(e.target.value)}>
@@ -199,14 +199,18 @@ export default function MargemContribuicaoPage() {
       ) : (
         <>
           {/* Avisos de rateio */}
-          {!hasRateio && (
+          {hasRateio ? (
+            <div className="card mb-4" style={{ padding: '10px 16px', background: '#eef7f0', border: '1px solid #a9d8b8', fontSize: 12, color: '#1a6b3d' }}>
+              Rateio operacional: <strong>{fmt(analysis.rateioUnit)}/unidade</strong> — despesas operacionais da DRE {year} ({fmt(opexTotal)}) ÷ {fmtInt(analysis.totalUnits)} unidades vendidas. Aplicado igualmente a cada produto.
+            </div>
+          ) : (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#fffbea', border: '1px solid #f0c040', fontSize: 12, color: '#7a5c00' }}>
-              ⚠ Sem Despesas Administrativas/Financeiras (ou sem receita) na DRE consolidada de {year} — a MC está considerando apenas <strong>Preço − Custo de Reposição</strong> (sem rateio). Classifique essas despesas na DRE para o cálculo completo.
+              ⚠ Rateio não aplicado: falta despesa operacional classificada na DRE {year} ({fmt(opexTotal)}) ou volume de vendas ({fmtInt(analysis.totalUnits)} un). A MC está usando só <strong>Preço − Custo de Reposição</strong>. Classifique as despesas na DRE e importe as vendas (Curva ABC) para o cálculo completo.
             </div>
           )}
           {!hasQty && (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#eef4fb', border: '1px solid #a9c7e8', fontSize: 12, color: '#2b5a8c' }}>
-              ℹ Sem quantidade vendida em {year} — MC/un e MC% estão corretas, mas a <strong>MC total</strong> e o ranking por contribuição ficam zerados. Importe o Relatório de Saída de Produtos (Bling) na aba <strong>Curva ABC</strong> para casar o volume por Código.
+              ℹ Sem quantidade vendida em {year} — importe o Relatório de Saída de Produtos (Bling) na aba <strong>Curva ABC</strong> para casar o volume por Código (necessário para o rateio/un e a MC total).
             </div>
           )}
 
@@ -308,7 +312,7 @@ export default function MargemContribuicaoPage() {
                       </td>
                       <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(r.price)}</td>
                       <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(r.cost)}</td>
-                      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)' }}>{fmt(r.raUnit + r.cfUnit)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)' }}>{fmt(r.rateio)}</td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: r.mcUnit >= 0 ? '#1a7a4a' : '#c0392b' }}>{fmt(r.mcUnit)}</td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: r.mcPct >= 0 ? '#1a7a4a' : '#c0392b' }}>{pctStr(r.mcPct)}</td>
                       <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)' }}>{r.qty ? fmtInt(r.qty) : '—'}</td>
