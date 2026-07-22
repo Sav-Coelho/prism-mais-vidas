@@ -27,6 +27,7 @@ export default function MargemContribuicaoPage() {
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [year, setYear] = useState(now.getFullYear())
   const [products, setProducts] = useState<any[]>([])
+  const [salesData, setSalesData] = useState<any[]>([])
   const [dre, setDre] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -43,9 +44,11 @@ export default function MargemContribuicaoPage() {
     Promise.all([
       fetch(`/api/margem?${unitId ? `unitId=${unitId}` : ''}`).then(r => r.json()),
       fetch(`/api/dre?month=${month}&year=${year}${unitParam}`).then(r => r.ok ? r.json() : null).catch(() => null),
-    ]).then(([p, d]) => {
+      fetch(`/api/abc/vendas?month=${month}&year=${year}${unitParam}`).then(r => r.json()).catch(() => []),
+    ]).then(([p, d, s]) => {
       setProducts(Array.isArray(p) ? p : [])
       setDre(d?.dre ?? null)
+      setSalesData(Array.isArray(s) ? s : [])
       setLoading(false)
     })
   }
@@ -101,7 +104,26 @@ export default function MargemContribuicaoPage() {
   const simCount = Object.keys(overrides).length
 
   const analysis = useMemo(() => {
-    const rows = products.map((p: any) => {
+    // Quantidade vendida por produto (Bling do mês), casada por Código/nome
+    const qtyMap = new Map<string, number>()
+    salesData.forEach((s: any) => {
+      const sku = String(s.sku || '').toLowerCase().trim()
+      const name = String(s.product || '').toLowerCase().trim()
+      if (sku) qtyMap.set('s:' + sku, (qtyMap.get('s:' + sku) || 0) + (s.quantity || 0))
+      if (name) qtyMap.set('n:' + name, (qtyMap.get('n:' + name) || 0) + (s.quantity || 0))
+    })
+    const lookupQty = (p: any): number => {
+      const sku = String(p.sku || '').toLowerCase().trim()
+      const name = String(p.product || '').toLowerCase().trim()
+      if (sku && qtyMap.has('s:' + sku)) return qtyMap.get('s:' + sku)!
+      if (name && qtyMap.has('n:' + name)) return qtyMap.get('n:' + name)!
+      return 0
+    }
+    // Receita base por produto (preço de catálogo × qtd) = base do rateio do custo fixo
+    const prep = products.map((p: any) => ({ p, qty: lookupQty(p), revBase: (p.salePrice || 0) * lookupQty(p) }))
+    const totalRevenue = prep.reduce((a, x) => a + x.revBase, 0)
+
+    const rows = prep.map(({ p, qty, revBase }) => {
       const basePrice = p.salePrice || 0
       const baseCost = p.replacementCost || 0
       const ov = overrides[p.id] || {}
@@ -112,11 +134,12 @@ export default function MargemContribuicaoPage() {
       const mcUnit = price - cost - despVarUnit
       const mcPct = price > 0 ? mcUnit / price : 0
       const markup = cost > 0 ? price / cost : null
-      // PEO por produto: unidades deste item (sozinho) p/ cobrir todos os custos fixos
-      const peoUn = custosFixos > 0 && mcUnit > 0 ? custosFixos / mcUnit : null
+      // Custo fixo rateado ao produto por participação na receita; PEO = fatia ÷ MC unitária
+      const fcRateado = totalRevenue > 0 ? (revBase / totalRevenue) * custosFixos : 0
+      const peoUn = fcRateado > 0 && mcUnit > 0 ? fcRateado / mcUnit : null
       return {
         id: p.id, product: p.product, sku: p.sku,
-        basePrice, baseCost, price, cost, despVarUnit, mcUnit, mcPct, markup, peoUn, edited,
+        basePrice, baseCost, price, cost, qty, despVarUnit, mcUnit, mcPct, markup, fcRateado, peoUn, edited,
       }
     }).sort((a, b) => b.mcPct - a.mcPct)
 
@@ -125,7 +148,7 @@ export default function MargemContribuicaoPage() {
     const piores = [...rows].sort((a, b) => a.mcPct - b.mcPct).slice(0, 15).reverse()
       .map(r => ({ name: r.product.length > 22 ? r.product.slice(0, 21) + '…' : r.product, mcPct: +(r.mcPct * 100).toFixed(1) }))
     return { rows, avgMcPct, negativos, piores }
-  }, [products, varRate, custosFixos, overrides])
+  }, [products, salesData, varRate, custosFixos, overrides])
 
   const hasData = products.length > 0
 
@@ -273,7 +296,7 @@ export default function MargemContribuicaoPage() {
                 <span style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>Simulador de Margem — {analysis.rows.length} produtos</span>
                 <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>
                   Edite <strong>Preço</strong> e <strong>Custo</strong> para simular o impacto na margem (não altera o catálogo salvo).
-                  {' '}<strong>PEO (un)</strong> = unidades deste produto (sozinho) para cobrir os custos fixos do mês ({fmt(custosFixos)}).
+                  {' '}<strong>PEO (un)</strong> = unidades p/ cobrir a fatia de custo fixo rateada ao produto (por participação na receita). Sem venda no mês → "—".
                 </div>
               </div>
               {simCount > 0 && (
