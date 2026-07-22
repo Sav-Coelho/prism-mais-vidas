@@ -11,21 +11,18 @@ const fmt = (v: number) =>
 const pctStr = (v: number) => `${(v * 100).toFixed(1)}%`
 const now = new Date()
 
-// Extrai o valor (R$) de um grupo da DRE pelas linhas
 function dreGroup(dre: any, label: string): number {
   if (!dre?.lines) return 0
   const l = (dre.lines as any[]).find(x => x.label === label && x.type === 'group')
   return l ? Math.abs(l.value) : 0
 }
 
-const OPEX_GROUPS = ['Despesas Administrativas', 'Despesas com Pessoal', 'Despesas com Marketing', 'Despesas Comerciais', 'Despesas Financeiras']
-
 type Override = { price?: number; cost?: number }
 
 export default function MargemContribuicaoPage() {
   const [units, setUnits] = useState<any[]>([])
   const [unitId, setUnitId] = useState('')
-  // Mês de referência do rateio (padrão = último mês com dados)
+  // Mês de referência para as taxas variáveis (padrão = último mês com dados)
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [year, setYear] = useState(now.getFullYear())
   const [products, setProducts] = useState<any[]>([])
@@ -35,7 +32,6 @@ export default function MargemContribuicaoPage() {
   const [toast, setToast] = useState('')
   const [drag, setDrag] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
-  // Simulação: overrides de preço/custo por produto (não persiste)
   const [overrides, setOverrides] = useState<Record<number, Override>>({})
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4500) }
@@ -54,7 +50,6 @@ export default function MargemContribuicaoPage() {
   }
   useEffect(() => {
     fetch('/api/units').then(r => r.json()).then(setUnits)
-    // padrão: último mês com vendas importadas (define o mês de referência)
     fetch('/api/abc/vendas').then(r => r.json()).then((all: any[]) => {
       if (Array.isArray(all) && all.length) {
         let best = { k: 0, y: now.getFullYear(), m: now.getMonth() + 1 }
@@ -87,12 +82,15 @@ export default function MargemContribuicaoPage() {
     setUploading(false)
   }
 
-  // Rateio dos Custos Fixos como % da RECEITA LÍQUIDA do mês, aplicado ao PREÇO de cada item.
-  // MC = Preço × (1 − fator) − Custo. Item lucra se markup (Preço÷Custo) > 1/(1−fator).
-  const opexTotal = OPEX_GROUPS.reduce((s, g) => s + dreGroup(dre, g), 0)
-  const receitaLiq = dre?.receitaLiquida ?? 0
-  const fator = receitaLiq > 0 ? opexTotal / receitaLiq : 0
-  const markupMin = fator < 1 ? 1 / (1 - fator) : 0  // 0 = inatingível (rateio ≥ 100%)
+  // Margem de Contribuição = Preço − (Custo de Reposição + Despesas Variáveis).
+  // Despesas variáveis (impostos sobre venda, taxa de cartão, comissão) vêm da DRE como
+  // % da receita: (Deduções sobre a Venda + Despesa Variável) ÷ Receita Bruta.
+  // Custos FIXOS não são rateados — cobrem-se via ponto de equilíbrio (na DRE).
+  const receitaBruta = dre?.receitaBruta ?? 0
+  const deducoes = dreGroup(dre, 'Deduções sobre a Venda')
+  const despVar = dreGroup(dre, 'Despesa Variável')
+  const varRate = receitaBruta > 0 ? (deducoes + despVar) / receitaBruta : 0
+  const custosFixos = dre?.custosFixos ?? 0
 
   const setOverride = (id: number, field: 'price' | 'cost', value: string) => {
     const v = value === '' ? 0 : parseFloat(value.replace(',', '.'))
@@ -109,13 +107,13 @@ export default function MargemContribuicaoPage() {
       const price = ov.price != null ? ov.price : basePrice
       const cost = ov.cost != null ? ov.cost : baseCost
       const edited = ov.price != null || ov.cost != null
-      const rateio = fator * price             // custos fixos como % da receita, sobre o preço
-      const mcUnit = price - cost - rateio
+      const despVarUnit = varRate * price          // despesas variáveis (% do preço)
+      const mcUnit = price - cost - despVarUnit
       const mcPct = price > 0 ? mcUnit / price : 0
       const markup = cost > 0 ? price / cost : null
       return {
         id: p.id, product: p.product, sku: p.sku,
-        basePrice, baseCost, price, cost, rateio, mcUnit, mcPct, markup, edited,
+        basePrice, baseCost, price, cost, despVarUnit, mcUnit, mcPct, markup, edited,
       }
     }).sort((a, b) => b.mcPct - a.mcPct)
 
@@ -124,10 +122,9 @@ export default function MargemContribuicaoPage() {
     const piores = [...rows].sort((a, b) => a.mcPct - b.mcPct).slice(0, 15).reverse()
       .map(r => ({ name: r.product.length > 22 ? r.product.slice(0, 21) + '…' : r.product, mcPct: +(r.mcPct * 100).toFixed(1) }))
     return { rows, avgMcPct, negativos, piores }
-  }, [products, fator, overrides])
+  }, [products, varRate, overrides])
 
   const hasData = products.length > 0
-  const hasRateio = opexTotal > 0 && receitaLiq > 0
 
   const priceInput = (r: any, field: 'price' | 'cost') => (
     <input
@@ -147,14 +144,14 @@ export default function MargemContribuicaoPage() {
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">Margem de Contribuição</h1>
-          <p className="page-subtitle">Análise geral por produto — MC = Preço × (1 − Custos Fixos ÷ Receita Líquida) − Custo</p>
+          <p className="page-subtitle">MC = Preço − (Custo de Reposição + Despesas Variáveis). Custos fixos não são rateados.</p>
         </div>
         <div className="flex gap-2" style={{ alignItems: 'center' }}>
           <select className="form-select" style={{ width: 150 }} value={unitId} onChange={e => setUnitId(e.target.value)}>
             <option value="">Todas as unidades</option>
             {units.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
-          <span style={{ fontSize: 11, color: 'var(--brave-gray)' }}>Mês do rateio:</span>
+          <span style={{ fontSize: 11, color: 'var(--brave-gray)' }}>Taxas variáveis do mês:</span>
           <select className="form-select" style={{ width: 110 }} value={month} onChange={e => setMonth(+e.target.value)}>
             {MONTH_NAMES.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
           </select>
@@ -180,7 +177,7 @@ export default function MargemContribuicaoPage() {
         </div>
         <div className="upload-sub">
           Colunas: <strong>Código · Produto · Preço de Venda · Preço de custo</strong>. Catálogo <strong>geral</strong> — cada upload substitui o anterior.
-          <br />O rateio operacional vem da DRE do mês de referência selecionado acima.
+          <br />As despesas variáveis (% da venda) vêm da DRE do mês de referência selecionado acima.
         </div>
       </div>
 
@@ -196,16 +193,11 @@ export default function MargemContribuicaoPage() {
         </div>
       ) : (
         <>
-          {/* Nota / aviso de rateio */}
-          {hasRateio ? (
-            <div className="card mb-4" style={{ padding: '10px 16px', background: '#eef7f0', border: '1px solid #a9d8b8', fontSize: 12, color: '#1a6b3d' }}>
-              Rateio: Custos Fixos de {MONTH_NAMES[month]}/{year} ({fmt(opexTotal)}) ÷ Receita Líquida ({fmt(receitaLiq)}) = <strong>{pctStr(fator)} do preço</strong>. Cada item cede {pctStr(fator)} do seu preço aos custos fixos; dá lucro se <strong>markup (Preço÷Custo) &gt; {markupMin.toFixed(2)}</strong>.
-            </div>
-          ) : (
-            <div className="card mb-4" style={{ padding: '10px 16px', background: '#fffbea', border: '1px solid #f0c040', fontSize: 12, color: '#7a5c00' }}>
-              ⚠ Sem Custos Fixos ou Receita Líquida na DRE de {MONTH_NAMES[month]}/{year} — a MC está usando só <strong>Preço − Custo de Reposição</strong> (rateio 0%). Classifique custos fixos e receita na DRE do mês para o rateio.
-            </div>
-          )}
+          {/* Nota de método */}
+          <div className="card mb-4" style={{ padding: '10px 16px', background: '#eef7f0', border: '1px solid #a9d8b8', fontSize: 12, color: '#1a6b3d' }}>
+            Despesas variáveis de {MONTH_NAMES[month]}/{year}: <strong>{pctStr(varRate)} do preço</strong> (Deduções {fmt(deducoes)} + Despesa Variável {fmt(despVar)} ÷ Receita {fmt(receitaBruta)}).
+            {' '}Os <strong>custos fixos</strong> ({fmt(custosFixos)}) <strong>não</strong> entram na MC — são cobertos pela soma das margens no <strong>ponto de equilíbrio</strong> (veja a DRE).
+          </div>
 
           {/* KPIs */}
           <div className="metrics-grid mb-6" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
@@ -216,9 +208,9 @@ export default function MargemContribuicaoPage() {
               <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>média simples dos produtos</div>
             </div>
             <div className="metric-card">
-              <div className="metric-label">Markup mínimo</div>
-              <div className="metric-value" style={{ fontSize: 18 }}>{markupMin > 0 ? `${markupMin.toFixed(2)}×` : '—'}</div>
-              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>Preço÷Custo p/ dar lucro · {MONTH_NAMES[month]}/{year}</div>
+              <div className="metric-label">Despesas variáveis</div>
+              <div className="metric-value" style={{ fontSize: 18 }}>{pctStr(varRate)}</div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>do preço · {MONTH_NAMES[month]}/{year}</div>
             </div>
             <div className="metric-card">
               <div className="metric-label">Produtos</div>
@@ -227,9 +219,9 @@ export default function MargemContribuicaoPage() {
             </div>
             <div className="metric-card">
               <div className="metric-accent" style={{ background: analysis.negativos.length > 0 ? '#c0392b' : '#1a7a4a' }} />
-              <div className="metric-label">Produtos no prejuízo</div>
+              <div className="metric-label">MC negativa</div>
               <div className="metric-value" style={{ fontSize: 18, color: analysis.negativos.length > 0 ? '#c0392b' : '#1a7a4a' }}>{analysis.negativos.length}</div>
-              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>MC unitária negativa</div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>vendem abaixo do custo variável</div>
             </div>
           </div>
 
@@ -237,7 +229,7 @@ export default function MargemContribuicaoPage() {
             {/* 15 menores MC% */}
             <div className="card">
               <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>15 menores margens (MC%)</div>
-              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>Produtos que mais pressionam o resultado</div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>Produtos que menos contribuem para cobrir os custos fixos</div>
               <ResponsiveContainer width="100%" height={340}>
                 <BarChart data={analysis.piores} layout="vertical" margin={{ left: 10, right: 16 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eee" horizontal={false} />
@@ -251,12 +243,12 @@ export default function MargemContribuicaoPage() {
               </ResponsiveContainer>
             </div>
 
-            {/* Produtos no prejuízo */}
+            {/* Produtos com MC negativa */}
             <div className="card">
-              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Produtos no Prejuízo (MC negativa)</div>
-              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>Vendendo abaixo do custo total (reposição + rateio)</div>
+              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Produtos com MC negativa</div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>Preço não cobre nem o custo variável — cada venda dá prejuízo</div>
               {analysis.negativos.length === 0 ? (
-                <div style={{ color: '#1a7a4a', fontSize: 13, padding: 12 }}>✓ Nenhum produto com margem negativa.</div>
+                <div style={{ color: '#1a7a4a', fontSize: 13, padding: 12 }}>✓ Todos os produtos têm margem de contribuição positiva.</div>
               ) : (
                 <div style={{ maxHeight: 300, overflowY: 'auto' }}>
                   {analysis.negativos.map(r => (
@@ -271,7 +263,7 @@ export default function MargemContribuicaoPage() {
             </div>
           </div>
 
-          {/* Tabela / Simulador */}
+          {/* Simulador */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--brave-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <div>
@@ -281,9 +273,7 @@ export default function MargemContribuicaoPage() {
                 </div>
               </div>
               {simCount > 0 && (
-                <button className="btn btn-secondary btn-sm" onClick={resetOverrides}>
-                  ↺ Restaurar valores ({simCount})
-                </button>
+                <button className="btn btn-secondary btn-sm" onClick={resetOverrides}>↺ Restaurar valores ({simCount})</button>
               )}
             </div>
             <div className="table-wrap">
@@ -294,7 +284,7 @@ export default function MargemContribuicaoPage() {
                     <th style={{ textAlign: 'right' }}>Preço (edit.)</th>
                     <th style={{ textAlign: 'right' }}>Custo Rep. (edit.)</th>
                     <th style={{ textAlign: 'right' }}>Markup</th>
-                    <th style={{ textAlign: 'right' }}>Rateio/un</th>
+                    <th style={{ textAlign: 'right' }}>Desp. Var./un</th>
                     <th style={{ textAlign: 'right' }}>MC/un</th>
                     <th style={{ textAlign: 'right' }}>MC%</th>
                   </tr>
@@ -308,10 +298,8 @@ export default function MargemContribuicaoPage() {
                       </td>
                       <td style={{ textAlign: 'right' }}>{priceInput(r, 'price')}</td>
                       <td style={{ textAlign: 'right' }}>{priceInput(r, 'cost')}</td>
-                      <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: r.markup == null ? 'var(--brave-gray)' : (markupMin > 0 && r.markup >= markupMin) ? '#1a7a4a' : '#c0392b' }}>
-                        {r.markup == null ? '—' : `${r.markup.toFixed(2)}×`}
-                      </td>
-                      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)' }}>{fmt(r.rateio)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)' }}>{r.markup == null ? '—' : `${r.markup.toFixed(2)}×`}</td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)' }}>{fmt(r.despVarUnit)}</td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: r.mcUnit >= 0 ? '#1a7a4a' : '#c0392b' }}>{fmt(r.mcUnit)}</td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: r.mcPct >= 0 ? '#1a7a4a' : '#c0392b' }}>{pctStr(r.mcPct)}</td>
                     </tr>
