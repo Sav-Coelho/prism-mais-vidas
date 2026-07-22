@@ -8,6 +8,7 @@ import {
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
+const fmtInt = (v: number) => new Intl.NumberFormat('pt-BR').format(Math.ceil(v))
 const pctStr = (v: number) => `${(v * 100).toFixed(1)}%`
 const now = new Date()
 
@@ -111,9 +112,11 @@ export default function MargemContribuicaoPage() {
       const mcUnit = price - cost - despVarUnit
       const mcPct = price > 0 ? mcUnit / price : 0
       const markup = cost > 0 ? price / cost : null
+      // PEO por produto: unidades deste item (sozinho) p/ cobrir todos os custos fixos
+      const peoUn = custosFixos > 0 && mcUnit > 0 ? custosFixos / mcUnit : null
       return {
         id: p.id, product: p.product, sku: p.sku,
-        basePrice, baseCost, price, cost, despVarUnit, mcUnit, mcPct, markup, edited,
+        basePrice, baseCost, price, cost, despVarUnit, mcUnit, mcPct, markup, peoUn, edited,
       }
     }).sort((a, b) => b.mcPct - a.mcPct)
 
@@ -122,7 +125,7 @@ export default function MargemContribuicaoPage() {
     const piores = [...rows].sort((a, b) => a.mcPct - b.mcPct).slice(0, 15).reverse()
       .map(r => ({ name: r.product.length > 22 ? r.product.slice(0, 21) + '…' : r.product, mcPct: +(r.mcPct * 100).toFixed(1) }))
     return { rows, avgMcPct, negativos, piores }
-  }, [products, varRate, overrides])
+  }, [products, varRate, custosFixos, overrides])
 
   const hasData = products.length > 0
 
@@ -270,6 +273,7 @@ export default function MargemContribuicaoPage() {
                 <span style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>Simulador de Margem — {analysis.rows.length} produtos</span>
                 <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>
                   Edite <strong>Preço</strong> e <strong>Custo</strong> para simular o impacto na margem (não altera o catálogo salvo).
+                  {' '}<strong>PEO (un)</strong> = unidades deste produto (sozinho) para cobrir os custos fixos do mês ({fmt(custosFixos)}).
                 </div>
               </div>
               {simCount > 0 && (
@@ -287,6 +291,7 @@ export default function MargemContribuicaoPage() {
                     <th style={{ textAlign: 'right' }}>Desp. Var./un</th>
                     <th style={{ textAlign: 'right' }}>MC/un</th>
                     <th style={{ textAlign: 'right' }}>MC%</th>
+                    <th style={{ textAlign: 'right' }}>PEO (un)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -302,6 +307,7 @@ export default function MargemContribuicaoPage() {
                       <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)' }}>{fmt(r.despVarUnit)}</td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: r.mcUnit >= 0 ? '#1a7a4a' : '#c0392b' }}>{fmt(r.mcUnit)}</td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: r.mcPct >= 0 ? '#1a7a4a' : '#c0392b' }}>{pctStr(r.mcPct)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)' }}>{r.peoUn == null ? '—' : `${fmtInt(r.peoUn)} un`}</td>
                     </tr>
                   ))}
                 </tbody>
