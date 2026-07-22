@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Shell from '@/components/Shell'
+import { MONTH_NAMES } from '@/lib/dre'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts'
@@ -21,7 +22,9 @@ function dreGroup(dre: any, label: string): number {
 export default function MargemContribuicaoPage() {
   const [units, setUnits] = useState<any[]>([])
   const [unitId, setUnitId] = useState('')
-  const [year, setYear] = useState(now.getFullYear())  // ano de referência p/ rateio e volume
+  // Mês de referência p/ rateio e volume (padrão = último mês com vendas)
+  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [year, setYear] = useState(now.getFullYear())
   const [products, setProducts] = useState<any[]>([])
   const [salesData, setSalesData] = useState<any[]>([])
   const [dre, setDre] = useState<any>(null)
@@ -37,10 +40,10 @@ export default function MargemContribuicaoPage() {
   const load = () => {
     setLoading(true)
     Promise.all([
-      // catálogo GERAL (sem período); DRE consolidada do ano (month=0) p/ rateio; vendas do ano p/ volume
+      // catálogo GERAL (sem período); DRE do MÊS de referência p/ rateio; vendas do mês p/ volume
       fetch(`/api/margem?${unitId ? `unitId=${unitId}` : ''}`).then(r => r.json()),
-      fetch(`/api/dre?month=0&year=${year}${unitParam}`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`/api/abc/vendas?year=${year}${unitParam}`).then(r => r.json()).catch(() => []),
+      fetch(`/api/dre?month=${month}&year=${year}${unitParam}`).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`/api/abc/vendas?month=${month}&year=${year}${unitParam}`).then(r => r.json()).catch(() => []),
     ]).then(([p, d, s]) => {
       setProducts(Array.isArray(p) ? p : [])
       setDre(d?.dre ?? null)
@@ -48,8 +51,18 @@ export default function MargemContribuicaoPage() {
       setLoading(false)
     })
   }
-  useEffect(() => { fetch('/api/units').then(r => r.json()).then(setUnits) }, [])
-  useEffect(() => { load() }, [year, unitId])
+  useEffect(() => {
+    fetch('/api/units').then(r => r.json()).then(setUnits)
+    // padrão: último mês com vendas importadas
+    fetch('/api/abc/vendas').then(r => r.json()).then((all: any[]) => {
+      if (Array.isArray(all) && all.length) {
+        let best = { k: 0, y: now.getFullYear(), m: now.getMonth() + 1 }
+        all.forEach(s => { const k = s.year * 100 + s.month; if (k > best.k) best = { k, y: s.year, m: s.month } })
+        if (best.k > 0) { setYear(best.y); setMonth(best.m) }
+      }
+    }).catch(() => {})
+  }, [])
+  useEffect(() => { load() }, [month, year, unitId])
 
   const upload = async (file: File) => {
     setUploading(true)
@@ -73,8 +86,8 @@ export default function MargemContribuicaoPage() {
   }
 
   // Rateio a partir da DRE: admin% e financeiro% sobre a Receita Operacional Bruta.
-  // Custo Rateado = TODAS as despesas operacionais da DRE consolidada do ano de referência,
-  // distribuídas como valor FIXO por unidade vendida (opex total ÷ unidades vendidas).
+  // Custo Rateado = TODAS as despesas operacionais da DRE do MÊS de referência,
+  // distribuídas como valor FIXO por unidade vendida no mês (opex do mês ÷ unidades do mês).
   const OPEX_GROUPS = ['Despesas Administrativas', 'Despesas com Pessoal', 'Despesas com Marketing', 'Despesas Comerciais', 'Despesas Financeiras']
   const opexTotal = OPEX_GROUPS.reduce((s, g) => s + dreGroup(dre, g), 0)
 
@@ -157,7 +170,10 @@ export default function MargemContribuicaoPage() {
             <option value="">Todas as unidades</option>
             {units.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
-          <span style={{ fontSize: 11, color: 'var(--brave-gray)' }}>Referência (rateio/volume):</span>
+          <span style={{ fontSize: 11, color: 'var(--brave-gray)' }}>Mês de referência (rateio/volume):</span>
+          <select className="form-select" style={{ width: 110 }} value={month} onChange={e => setMonth(+e.target.value)}>
+            {MONTH_NAMES.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+          </select>
           <select className="form-select" style={{ width: 90 }} value={year} onChange={e => setYear(+e.target.value)}>
             {[2023, 2024, 2025, 2026].map(y => <option key={y}>{y}</option>)}
           </select>
@@ -180,7 +196,7 @@ export default function MargemContribuicaoPage() {
         </div>
         <div className="upload-sub">
           Colunas: <strong>Código · Produto · Preço de Venda · Preço de custo</strong>. Catálogo <strong>geral</strong> — cada upload substitui o anterior.
-          <br />O rateio (Desp. Adm./Financeiras) e o volume vendido vêm da referência de ano selecionada acima.
+          <br />O rateio (despesas operacionais) e o volume vendido vêm do mês de referência selecionado acima.
         </div>
       </div>
 
@@ -201,16 +217,16 @@ export default function MargemContribuicaoPage() {
           {/* Avisos de rateio */}
           {hasRateio ? (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#eef7f0', border: '1px solid #a9d8b8', fontSize: 12, color: '#1a6b3d' }}>
-              Rateio operacional: <strong>{fmt(analysis.rateioUnit)}/unidade</strong> — despesas operacionais da DRE {year} ({fmt(opexTotal)}) ÷ {fmtInt(analysis.totalUnits)} unidades vendidas. Aplicado igualmente a cada produto.
+              Rateio operacional: <strong>{fmt(analysis.rateioUnit)}/unidade</strong> — despesas operacionais de {MONTH_NAMES[month]}/{year} ({fmt(opexTotal)}) ÷ {fmtInt(analysis.totalUnits)} unidades vendidas no mês. Aplicado igualmente a cada produto.
             </div>
           ) : (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#fffbea', border: '1px solid #f0c040', fontSize: 12, color: '#7a5c00' }}>
-              ⚠ Rateio não aplicado: falta despesa operacional classificada na DRE {year} ({fmt(opexTotal)}) ou volume de vendas ({fmtInt(analysis.totalUnits)} un). A MC está usando só <strong>Preço − Custo de Reposição</strong>. Classifique as despesas na DRE e importe as vendas (Curva ABC) para o cálculo completo.
+              ⚠ Rateio não aplicado: falta despesa operacional na DRE de {MONTH_NAMES[month]}/{year} ({fmt(opexTotal)}) ou volume de vendas ({fmtInt(analysis.totalUnits)} un). A MC está usando só <strong>Preço − Custo de Reposição</strong>. Classifique as despesas na DRE e importe as vendas (Curva ABC) do mês para o cálculo completo.
             </div>
           )}
           {!hasQty && (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#eef4fb', border: '1px solid #a9c7e8', fontSize: 12, color: '#2b5a8c' }}>
-              ℹ Sem quantidade vendida em {year} — importe o Relatório de Saída de Produtos (Bling) na aba <strong>Curva ABC</strong> para casar o volume por Código (necessário para o rateio/un e a MC total).
+              ℹ Sem quantidade vendida em {MONTH_NAMES[month]}/{year} — importe o Relatório de Saída de Produtos (Bling) do mês na aba <strong>Curva ABC</strong> para casar o volume por Código (necessário para o rateio/un e a MC total).
             </div>
           )}
 
