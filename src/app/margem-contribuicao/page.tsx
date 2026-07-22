@@ -87,12 +87,12 @@ export default function MargemContribuicaoPage() {
     setUploading(false)
   }
 
-  // Rateio por MARKUP sobre o custo: fator = despesas operacionais do mês ÷ CMV do mês.
-  // Custo cheio = custo × (1 + fator). Item lucra se markup (Preço÷Custo) > (1 + fator).
+  // Rateio dos Custos Fixos como % da RECEITA LÍQUIDA do mês, aplicado ao PREÇO de cada item.
+  // MC = Preço × (1 − fator) − Custo. Item lucra se markup (Preço÷Custo) > 1/(1−fator).
   const opexTotal = OPEX_GROUPS.reduce((s, g) => s + dreGroup(dre, g), 0)
-  const cmv = dreGroup(dre, 'Custo do Produto/Serviço')
-  const fator = cmv > 0 ? opexTotal / cmv : 0
-  const markupMin = 1 + fator
+  const receitaLiq = dre?.receitaLiquida ?? 0
+  const fator = receitaLiq > 0 ? opexTotal / receitaLiq : 0
+  const markupMin = fator < 1 ? 1 / (1 - fator) : 0  // 0 = inatingível (rateio ≥ 100%)
 
   const setOverride = (id: number, field: 'price' | 'cost', value: string) => {
     const v = value === '' ? 0 : parseFloat(value.replace(',', '.'))
@@ -109,7 +109,7 @@ export default function MargemContribuicaoPage() {
       const price = ov.price != null ? ov.price : basePrice
       const cost = ov.cost != null ? ov.cost : baseCost
       const edited = ov.price != null || ov.cost != null
-      const rateio = fator * cost              // rateio proporcional ao custo (markup)
+      const rateio = fator * price             // custos fixos como % da receita, sobre o preço
       const mcUnit = price - cost - rateio
       const mcPct = price > 0 ? mcUnit / price : 0
       const markup = cost > 0 ? price / cost : null
@@ -127,7 +127,7 @@ export default function MargemContribuicaoPage() {
   }, [products, fator, overrides])
 
   const hasData = products.length > 0
-  const hasRateio = opexTotal > 0 && cmv > 0
+  const hasRateio = opexTotal > 0 && receitaLiq > 0
 
   const priceInput = (r: any, field: 'price' | 'cost') => (
     <input
@@ -147,7 +147,7 @@ export default function MargemContribuicaoPage() {
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">Margem de Contribuição</h1>
-          <p className="page-subtitle">Análise geral por produto — rateio dos custos fixos por markup: custo cheio = custo × (1 + Custos Fixos ÷ CMV do mês)</p>
+          <p className="page-subtitle">Análise geral por produto — MC = Preço × (1 − Custos Fixos ÷ Receita Líquida) − Custo</p>
         </div>
         <div className="flex gap-2" style={{ alignItems: 'center' }}>
           <select className="form-select" style={{ width: 150 }} value={unitId} onChange={e => setUnitId(e.target.value)}>
@@ -199,11 +199,11 @@ export default function MargemContribuicaoPage() {
           {/* Nota / aviso de rateio */}
           {hasRateio ? (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#eef7f0', border: '1px solid #a9d8b8', fontSize: 12, color: '#1a6b3d' }}>
-              Rateio por markup: custo cheio = custo × <strong>{markupMin.toFixed(3)}</strong> — Custos Fixos de {MONTH_NAMES[month]}/{year} ({fmt(opexTotal)}) ÷ CMV ({fmt(cmv)}) = {pctStr(fator)} sobre o custo. Item dá lucro se <strong>markup (Preço÷Custo) &gt; {markupMin.toFixed(2)}</strong>.
+              Rateio: Custos Fixos de {MONTH_NAMES[month]}/{year} ({fmt(opexTotal)}) ÷ Receita Líquida ({fmt(receitaLiq)}) = <strong>{pctStr(fator)} do preço</strong>. Cada item cede {pctStr(fator)} do seu preço aos custos fixos; dá lucro se <strong>markup (Preço÷Custo) &gt; {markupMin.toFixed(2)}</strong>.
             </div>
           ) : (
             <div className="card mb-4" style={{ padding: '10px 16px', background: '#fffbea', border: '1px solid #f0c040', fontSize: 12, color: '#7a5c00' }}>
-              ⚠ Sem Custos Fixos ou CMV na DRE de {MONTH_NAMES[month]}/{year} — a MC está usando só <strong>Preço − Custo de Reposição</strong> (rateio 0%). Classifique custos fixos e CMV na DRE do mês para o rateio.
+              ⚠ Sem Custos Fixos ou Receita Líquida na DRE de {MONTH_NAMES[month]}/{year} — a MC está usando só <strong>Preço − Custo de Reposição</strong> (rateio 0%). Classifique custos fixos e receita na DRE do mês para o rateio.
             </div>
           )}
 
@@ -217,7 +217,7 @@ export default function MargemContribuicaoPage() {
             </div>
             <div className="metric-card">
               <div className="metric-label">Markup mínimo</div>
-              <div className="metric-value" style={{ fontSize: 18 }}>{markupMin.toFixed(2)}×</div>
+              <div className="metric-value" style={{ fontSize: 18 }}>{markupMin > 0 ? `${markupMin.toFixed(2)}×` : '—'}</div>
               <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>Preço÷Custo p/ dar lucro · {MONTH_NAMES[month]}/{year}</div>
             </div>
             <div className="metric-card">
@@ -308,7 +308,7 @@ export default function MargemContribuicaoPage() {
                       </td>
                       <td style={{ textAlign: 'right' }}>{priceInput(r, 'price')}</td>
                       <td style={{ textAlign: 'right' }}>{priceInput(r, 'cost')}</td>
-                      <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: r.markup == null ? 'var(--brave-gray)' : r.markup >= markupMin ? '#1a7a4a' : '#c0392b' }}>
+                      <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: r.markup == null ? 'var(--brave-gray)' : (markupMin > 0 && r.markup >= markupMin) ? '#1a7a4a' : '#c0392b' }}>
                         {r.markup == null ? '—' : `${r.markup.toFixed(2)}×`}
                       </td>
                       <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)' }}>{fmt(r.rateio)}</td>
