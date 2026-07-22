@@ -34,16 +34,22 @@ export default function MargemContribuicaoPage() {
   const [drag, setDrag] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const [overrides, setOverrides] = useState<Record<number, Override>>({})
+  // Guarda contra respostas fora de ordem: o auto-default troca o mês logo após a
+  // montagem, e o fetch do mês antigo pode chegar DEPOIS do fetch do mês novo,
+  // sobrescrevendo a DRE com dados do mês errado.
+  const loadSeq = useRef(0)
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4500) }
   const unitParam = unitId ? `&unitId=${unitId}` : ''
 
   const load = () => {
+    const seq = ++loadSeq.current
     setLoading(true)
     Promise.all([
       fetch(`/api/margem?${unitId ? `unitId=${unitId}` : ''}`).then(r => r.json()),
       fetch(`/api/dre?month=${month}&year=${year}${unitParam}`).then(r => r.ok ? r.json() : null).catch(() => null),
     ]).then(([p, d]) => {
+      if (seq !== loadSeq.current) return // resposta obsoleta — um load mais novo assumiu
       setProducts(Array.isArray(p) ? p : [])
       setDre(d?.dre ?? null)
       setLoading(false)
