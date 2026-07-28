@@ -12,6 +12,7 @@ const NAV = [
   { href: '/lancamentos', icon: '↑↓', label: 'Lançamentos / OFX' },
   { href: '/saldo', icon: '◉', label: 'Saldo Bancário' },
   { href: '/dre', icon: '▦', label: 'DRE' },
+  { href: '/fluxo-projetado', icon: '📅', label: 'Fluxo Projetado' },
 ]
 
 export default function Shell({ children }: { children: React.ReactNode }) {

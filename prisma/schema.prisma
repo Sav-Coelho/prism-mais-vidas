@@ -20,6 +20,7 @@ model Unit {
   salesRecords   SalesRecord[]
   stockItems     StockItem[]
   marginProducts MarginProduct[]
+  fixedExpenses  FixedExpense[]
 }
 
 model BankAccount {
@@ -200,6 +201,23 @@ model MarginProduct {
   month           Int
   year            Int
   createdAt       DateTime @default(now())
+
+  @@index([month, year])
+}
+
+// Despesas fixas PROJETADAS (contas a pagar futuras) importadas por planilha.
+// Uma linha por despesa por mês/ano/unidade — base do Fluxo de Caixa Projetado.
+// Re-upload substitui apenas os meses presentes no arquivo.
+model FixedExpense {
+  id          Int      @id @default(autoincrement())
+  description String
+  category    String?
+  amount      Float    @default(0)
+  unitId      Int?
+  unit        Unit?    @relation(fields: [unitId], references: [id])
+  month       Int
+  year        Int
+  createdAt   DateTime @default(now())
 
   @@index([month, year])
 }
