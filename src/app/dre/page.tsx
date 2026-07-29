@@ -71,6 +71,8 @@ export default function DREPage() {
   const [units, setUnits] = useState<any[]>([])
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  // Incluir ou não os impostos nos pontos de equilíbrio
+  const [comImpostos, setComImpostos] = useState(false)
 
   useEffect(() => {
     fetch('/api/units').then(r => r.json()).then(setUnits)
@@ -93,6 +95,16 @@ export default function DREPage() {
   }))
 
   const unitLabel = unitId ? units.find(u => u.id === parseInt(unitId))?.name : 'Consolidado'
+
+  // Impostos do mês (grupo da DRE). Como no Simples são pagos com defasagem, são um
+  // desembolso conhecido do mês → entram no numerador do ponto de equilíbrio.
+  const impostosMes = (() => {
+    const l = ((dre?.lines || []) as any[]).find(x => x.label === 'Impostos' && x.type === 'group')
+    return l ? Math.abs(l.value) : 0
+  })()
+  // Receita adicional necessária para cobrir os impostos: imposto ÷ margem de contribuição
+  const deltaImp = comImpostos && dre?.mcPct > 0 ? impostosMes / dre.mcPct : 0
+  const impostosPct = dre?.receitaBruta > 0 ? impostosMes / dre.receitaBruta : 0
 
   return (
     <Shell>
@@ -151,18 +163,42 @@ export default function DREPage() {
 
           {/* Pontos de Equilíbrio */}
           <div className="card mb-6">
-            <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
-              Pontos de Equilíbrio — {MONTH_NAMES[month]}/{year}
+            <div className="flex-between" style={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
+                  Pontos de Equilíbrio — {MONTH_NAMES[month]}/{year}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>
+                  Receita mínima necessária para zerar o resultado em cada nível · Margem de contribuição: {(dre.mcPct * 100).toFixed(1)}% da receita
+                  {comImpostos && impostosMes > 0 && (
+                    <> · impostos de {fmt(impostosMes)} ({(impostosPct * 100).toFixed(1)}% da receita) exigem <strong>+{fmt(deltaImp)}</strong> de faturamento</>
+                  )}
+                </div>
+              </div>
+              {/* Toggle: considerar impostos */}
+              <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--brave-light)', background: 'var(--brave-light)', flexShrink: 0 }}>
+                {[{ on: false, label: 'Sem impostos' }, { on: true, label: 'Com impostos' }].map(opt => (
+                  <button key={opt.label} onClick={() => setComImpostos(opt.on)} style={{
+                    padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: 12,
+                    fontFamily: 'var(--font-sub)', fontWeight: comImpostos === opt.on ? 700 : 500,
+                    background: comImpostos === opt.on ? 'var(--brave-dark)' : 'transparent',
+                    color: comImpostos === opt.on ? '#fff' : 'var(--brave-gray)',
+                    transition: 'all 0.15s',
+                  }}>{opt.label}</button>
+                ))}
+              </div>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>
-              Receita mínima necessária para zerar o resultado em cada nível · Margem de contribuição: {(dre.mcPct * 100).toFixed(1)}% da receita
-            </div>
+            {impostosMes === 0 && (
+              <div style={{ fontSize: 11, color: '#7a5c00', background: '#fffbea', border: '1px solid #f0c040', borderRadius: 6, padding: '6px 10px', marginBottom: 12 }}>
+                Sem impostos classificados em {MONTH_NAMES[month]}/{year} — os dois modos mostram o mesmo valor.
+              </div>
+            )}
             {dre.mcPct > 0 ? (
               <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 {[
-                  { sigla: 'PEO', label: 'Ponto de Equilíbrio Operacional', value: dre.peo, hint: 'cobre os custos fixos', achieved: dre.receitaBruta >= dre.peo },
-                  { sigla: 'PEI', label: 'Ponto de Equilíbrio de Investimentos', value: dre.pei, hint: 'cobre custos fixos + investimentos', achieved: dre.receitaBruta >= dre.pei },
-                  { sigla: 'PEF', label: 'Ponto de Equilíbrio Financeiro', value: dre.pef, hint: 'cobre tudo + desembolsos não operacionais', achieved: dre.receitaBruta >= dre.pef, highlight: true },
+                  { sigla: 'PEO', label: 'Ponto de Equilíbrio Operacional', value: dre.peo + deltaImp, hint: comImpostos ? 'cobre custos fixos + impostos' : 'cobre os custos fixos', achieved: dre.receitaBruta >= dre.peo + deltaImp },
+                  { sigla: 'PEI', label: 'Ponto de Equilíbrio de Investimentos', value: dre.pei + deltaImp, hint: comImpostos ? 'cobre fixos + investimentos + impostos' : 'cobre custos fixos + investimentos', achieved: dre.receitaBruta >= dre.pei + deltaImp },
+                  { sigla: 'PEF', label: 'Ponto de Equilíbrio Financeiro', value: dre.pef + deltaImp, hint: comImpostos ? 'cobre todos os desembolsos, incluindo impostos' : 'cobre tudo + desembolsos não operacionais', achieved: dre.receitaBruta >= dre.pef + deltaImp, highlight: true },
                 ].map(pe => (
                   <div key={pe.sigla} className="metric-card" style={pe.highlight ? { border: '2px solid var(--brave-yellow)' } : undefined}>
                     <div className="metric-accent" style={{ background: pe.achieved ? '#1a7a4a' : '#c0392b' }} />
@@ -203,24 +239,31 @@ export default function DREPage() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 1, padding: '6px 0' }}>
                 {dre.lines.map((line: any, i: number) => {
-                  const showPct = line.type !== 'transfer' && line.type !== 'breakeven' && line.value !== 0 && dre.receitaBruta > 0
-                  const avPct = showPct ? pct(Math.abs(line.value), dre.receitaBruta) : '—'
+                  // Linhas de ponto de equilíbrio acompanham o modo com/sem impostos do painel
+                  const value = line.type === 'breakeven' ? line.value + deltaImp : line.value
+                  const showPct = line.type !== 'transfer' && line.type !== 'breakeven' && value !== 0 && dre.receitaBruta > 0
+                  const avPct = showPct ? pct(Math.abs(value), dre.receitaBruta) : '—'
                   const isHighlight = line.type === 'subtotal'
                   const pctColor = isHighlight
-                    ? (line.value >= 0 ? '#1a7a4a' : '#c0392b')
+                    ? (value >= 0 ? '#1a7a4a' : '#c0392b')
                     : 'var(--brave-gray)'
 
                   return (
-                    <div key={i} style={{ ...lineStyle(line.type, line.indent, line.value), justifyContent: 'space-between' }}>
+                    <div key={i} style={{ ...lineStyle(line.type, line.indent, value), justifyContent: 'space-between' }}>
                       <div style={{ flex: 1 }}>
-                        <div style={labelStyle(line.type, line.indent)}>{line.label}</div>
+                        <div style={labelStyle(line.type, line.indent)}>
+                          {line.label}
+                          {line.type === 'breakeven' && comImpostos && deltaImp > 0 && (
+                            <span style={{ marginLeft: 5, fontSize: 9, color: '#856404', fontWeight: 600 }}>c/ impostos</span>
+                          )}
+                        </div>
                         {line.sublabel && (
                           <div style={{ fontSize: 10, color: 'var(--brave-gray)' }}>{line.sublabel}</div>
                         )}
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-                        <div style={{ ...valueStyle(line.type, line.value), minWidth: 90, textAlign: 'right' }}>
-                          {line.value !== 0 ? fmt(line.value) : '—'}
+                        <div style={{ ...valueStyle(line.type, value), minWidth: 90, textAlign: 'right' }}>
+                          {value !== 0 ? fmt(value) : '—'}
                         </div>
                         <div style={{
                           minWidth: 52, textAlign: 'right',
