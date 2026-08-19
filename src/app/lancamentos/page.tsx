@@ -6,7 +6,7 @@ import { MONTH_NAMES } from '@/lib/dre'
 import { tokenize, jaccardSimilarity } from '@/lib/classifier'
 import { parseCSV } from '@/lib/csv-parser'
 
-const CARD_ACCEPT = '.csv,.CSV,.pdf,.PDF'
+const CARD_ACCEPT = '.ofx,.OFX,.csv,.CSV,.pdf,.PDF'
 
 
 // Threshold para sugestão no painel: exige similaridade forte (≥0.5) para evitar falsos positivos
@@ -279,8 +279,51 @@ export default function Lancamentos() {
     setParsing(false)
   }
 
+  // Fatura de cartão em OFX (<CREDITCARDMSGSRSV1>). Reaproveita o parser OFX em "modo
+  // cartão": os lançamentos são tratados como fatura (competência = mês/ano da página,
+  // via previewSource='csv') e recebem fitid prefixado "card_" para o badge/filtro.
+  const parseCardOFX = async (file: File) => {
+    setParsing(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('card', 'true')
+      const res = await fetch('/api/ofx/parse', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) {
+        showToast(`Erro: ${data.error}`)
+        setParsing(false)
+        return
+      }
+
+      const txList: PreviewTx[] = data.transactions
+      setPreviewTxs(txList)
+      setPreviewSource('csv')
+      setSelectedFitids(new Set(
+        txList.filter((t: PreviewTx) => !t.alreadyImported && !t.isBalance).map((t: PreviewTx) => t.fitid)
+      ))
+      setPreviewAccountMap({})
+      setPreviewTransferDestMap({})
+      setSuggestedFitids(new Set())
+      setDetectedBankInfo(null)
+      setMatchedBankAccount(null)
+      setLedgerBalance(null)
+      setPreviewUnitId(unitId)
+      setPreviewBankAccountId('')
+      setPdfCardInfo(null)
+
+      runClassifier(txList)
+    } catch {
+      showToast('Erro ao processar o OFX do cartão')
+    }
+    setParsing(false)
+  }
+
   const handleCardFile = (file: File) => {
-    if (file.name.toLowerCase().endsWith('.pdf')) {
+    const lower = file.name.toLowerCase()
+    if (lower.endsWith('.ofx')) {
+      parseCardOFX(file)
+    } else if (lower.endsWith('.pdf')) {
       parsePDFFile(file)
     } else {
       parseCSVFile(file)
@@ -521,7 +564,7 @@ export default function Lancamentos() {
   const clearTxSelection = () => setSelectedTxIds(new Set())
 
   const isCardTx = (t: any) =>
-    t.fitid && (t.fitid.startsWith('sicoob_') || t.fitid.startsWith('csv_'))
+    t.fitid && (t.fitid.startsWith('sicoob_') || t.fitid.startsWith('csv_') || t.fitid.startsWith('card_'))
 
   const filtered = transactions.filter(t => {
     if (filter === 'sem-conta') return !t.accountId
@@ -612,8 +655,9 @@ export default function Lancamentos() {
           <div className="card mb-3" style={{ padding: '12px 20px', background: '#fffbea', border: '1px solid #f0c040' }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#7a5c00' }}>Formatos suportados</div>
             <div style={{ fontSize: 12, color: '#7a5c00', lineHeight: 1.6 }}>
-              <strong>PDF Sicoob</strong> — extrato gerado pelo portal SiscoobCard (recomendado) ·{' '}
-              <strong>CSV genérico</strong> — colunas de data, descrição e valor (Nubank, etc.)
+              <strong>OFX Sicoob</strong> — arquivo da fatura do cartão (recomendado) ·{' '}
+              <strong>CSV genérico</strong> — colunas de data, descrição e valor (Nubank, etc.) ·{' '}
+              <strong>PDF Sicoob</strong> — extrato do portal SiscoobCard
             </div>
             <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
@@ -642,7 +686,7 @@ export default function Lancamentos() {
             />
             <div className="upload-icon">{parsing ? '⏳' : '💳'}</div>
             <div className="upload-title">{parsing ? 'Lendo fatura...' : 'Importar Fatura do Cartão de Crédito'}</div>
-            <div className="upload-sub">Clique ou arraste o arquivo <strong>.PDF</strong> (Sicoob) ou <strong>.CSV</strong> (outros cartões)</div>
+            <div className="upload-sub">Clique ou arraste o arquivo <strong>.OFX</strong> (Sicoob, recomendado), <strong>.CSV</strong> (outros cartões) ou <strong>.PDF</strong></div>
           </div>
         </div>
       )}

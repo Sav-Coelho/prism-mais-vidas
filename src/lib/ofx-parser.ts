@@ -11,6 +11,7 @@ export interface OFXBankInfo {
   acctId: string | null
   acctType: string | null
   org: string | null
+  isCreditCard: boolean
 }
 
 export interface OFXBalance {
@@ -57,15 +58,19 @@ export function parseOFX(content: string): OFXParseResult {
 
 function extractBankInfo(text: string): OFXBankInfo {
   const acctBlock = text.match(/<BANKACCTFROM>([\s\S]*?)<\/BANKACCTFROM>/i)?.[1] ?? ''
+  // Fatura de cartão de crédito usa <CCACCTFROM> (só ACCTID, sem BANKID)
+  const ccAcctBlock = text.match(/<CCACCTFROM>([\s\S]*?)<\/CCACCTFROM>/i)?.[1] ?? ''
   const fiBlock = text.match(/<FI>([\s\S]*?)<\/FI>/i)?.[1] ?? ''
   // ORG also appears without closing tag in some OFX files, search header broadly
   const header = text.split(/<STMTTRN>/i)[0]
   const org = extractTag(fiBlock, 'ORG') || extractTag(header, 'ORG')
+  const isCreditCard = /<CREDITCARDMSGSRSV1>|<CCSTMTRS>|<CCACCTFROM>/i.test(text)
   return {
     bankId: extractTag(acctBlock, 'BANKID'),
-    acctId: extractTag(acctBlock, 'ACCTID'),
+    acctId: extractTag(acctBlock, 'ACCTID') || extractTag(ccAcctBlock, 'ACCTID'),
     acctType: extractTag(acctBlock, 'ACCTTYPE'),
     org,
+    isCreditCard,
   }
 }
 
