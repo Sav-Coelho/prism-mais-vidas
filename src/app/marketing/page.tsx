@@ -77,19 +77,29 @@ export default function MarketingPage() {
   const [form, setForm] = useState<Record<string, string>>(emptyForm())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [seeding, setSeeding] = useState(false)
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
 
   const load = () => {
     setLoading(true)
+    setLoadError('')
     const unitParam = unitId ? `&unitId=${unitId}` : ''
     fetch(`/api/marketing?year=${year}${unitParam}`)
-      .then(r => r.json())
+      .then(async r => {
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `HTTP ${r.status}`) }
+        return r.json()
+      })
       .then((rows: Metric[]) => {
         setMetrics(Array.isArray(rows) ? rows : [])
         setLoading(false)
       })
-      .catch(() => { setMetrics([]); setLoading(false) })
+      .catch((e: Error) => {
+        setMetrics([])
+        setLoadError(String(e?.message || 'falha ao carregar'))
+        setLoading(false)
+      })
   }
   useEffect(() => { fetch('/api/units').then(r => r.json()).then(setUnits).catch(() => {}) }, [])
   useEffect(() => { load() }, [year, unitId])
@@ -171,6 +181,34 @@ export default function MarketingPage() {
     setSaving(false)
   }
 
+  // Carga rápida dos meses com dados completos já analisados (fechamentos jun–jul 2026).
+  // Faz upsert na unidade selecionada no topo — recarregar não duplica.
+  const seedJunJul = async () => {
+    setSeeding(true)
+    const base = { year: 2026, unitId: unitId || null }
+    const meses = [
+      { month: 6, revenueBilled: 17162.42, revenueCaptured: 0, investment: 2362, sessions: 10061,
+        orders: 117, ticket: 146.69, conversionRate: 1.16, roas: 7.27, cpa: 20.19, approvalRate: 0, paidTrafficPct: 0 },
+      { month: 7, revenueBilled: 16753.34, revenueCaptured: 17750.43, investment: 2218.22, sessions: 11081,
+        orders: 128, ticket: 130.89, conversionRate: 1.16, roas: 7.55, cpa: 17.33, approvalRate: 94.4, paidTrafficPct: 0 },
+    ]
+    try {
+      for (const m of meses) {
+        const res = await fetch('/api/marketing', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...base, ...m }),
+        })
+        if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`) }
+      }
+      showToast('✓ Jun e Jul/2026 carregados')
+      setYear(2026)
+      load()
+    } catch (e) {
+      showToast(`Erro ao carregar: ${(e as Error).message}`)
+    }
+    setSeeding(false)
+  }
+
   const remove = async (m: Metric) => {
     if (typeof window !== 'undefined' && !window.confirm(`Excluir os indicadores de ${MONTH_NAMES[m.month]}/${m.year}?`)) return
     await fetch(`/api/marketing/${m.id}`, { method: 'DELETE' })
@@ -241,11 +279,29 @@ export default function MarketingPage() {
 
       {loading ? (
         <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--brave-gray)' }}>Carregando...</div>
+      ) : loadError ? (
+        <div className="card" style={{ padding: '32px 40px', textAlign: 'center' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>⚠️</div>
+          <div style={{ fontWeight: 600, color: '#c0392b', marginBottom: 6 }}>Não foi possível carregar os indicadores</div>
+          <div style={{ fontSize: 13, color: 'var(--brave-gray)', maxWidth: 520, margin: '0 auto 4px' }}>
+            Detalhe técnico: <code>{loadError}</code>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--brave-gray)', maxWidth: 520, margin: '0 auto' }}>
+            Se a tabela de marketing ainda não existe (o banco pode ter ficado suspenso no último build),
+            acorde o Neon e faça um <strong>Redeploy</strong> na Vercel — o build cria a tabela automaticamente.
+          </div>
+          <button className="btn btn-secondary btn-sm" style={{ marginTop: 14 }} onClick={load}>Tentar de novo</button>
+        </div>
       ) : metrics.length === 0 ? (
         <div className="card" style={{ padding: 60, textAlign: 'center', color: 'var(--brave-gray)' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📣</div>
           Nenhum indicador de marketing em {year}.<br />
-          <span style={{ fontSize: 12 }}>Clique em <strong>+ Novo mês</strong> para cadastrar o fechamento.</span>
+          <span style={{ fontSize: 12 }}>Cadastre um mês em <strong>+ Novo mês</strong> ou carregue os fechamentos já analisados.</span>
+          <div style={{ marginTop: 18 }}>
+            <button className="btn btn-primary" onClick={seedJunJul} disabled={seeding}>
+              {seeding ? 'Carregando...' : '↓ Carregar Jun–Jul 2026'}
+            </button>
+          </div>
         </div>
       ) : (
         <>
