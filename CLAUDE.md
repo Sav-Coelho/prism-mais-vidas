@@ -6,15 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm run dev          # dev server at http://localhost:3000
-npm run build        # production build (runs: prisma generate && next build)
-npm run db:push      # push schema to DB (run manually when schema.prisma changes)
+npm run build        # production build (prisma generate && (prisma db push || skip) && next build)
+npm run db:push      # push schema to DB manually (e.g. when Neon was asleep at build time)
 npm run db:studio    # Prisma Studio (visual DB editor)
 git push             # triggers Vercel auto-deploy
 ```
 
-The build does **not** run `prisma db push` — that would fail whenever the Neon
-free-tier compute is suspended (P1001 unreachable) at build time. Push schema
-changes manually with `npm run db:push` (needs a live DB / `DIRECT_URL`).
+The build **attempts** `prisma db push` but tolerates failure (`|| echo …`), so a
+suspended Neon free-tier compute (P1001 unreachable) never breaks the deploy. When
+the DB is awake, schema syncs automatically; if it was asleep during a build that
+added a table, redeploy with Neon awake or run `npm run db:push` manually.
 
 No test suite. Type-check only via `npm run build`.
 

@@ -2,7 +2,7 @@
 
 Sistema financeiro da **Brave Educação** operando para o cliente **Tio Chico Shop** —
 evolução do Prism DRE com módulos de Clientes, Vendas, Fornecedores, Ordens de Compra,
-Curva ABC, Margem de Contribuição por produto e Fluxo de Caixa Projetado.
+Curva ABC, Margem de Contribuição por produto, Fluxo de Caixa Projetado e Indicadores de Marketing.
 
 Dono/dev: Savio (savio@braveeducacao.com.br)
 Path local: `G:\.shortcut-targets-by-id\...\Tio Chico Shop\prism-mais-vidas\` (Google Drive)
@@ -23,7 +23,7 @@ Banco: PostgreSQL Neon, região `sa-east-1` (São Paulo), free tier (0.5 GB)
 | Planilhas | xlsx |
 | PDF | pdf-parse (extrato de cartão Sicoob) |
 | IA | @anthropic-ai/sdk (rota `/api/ai/chat`, modelo Haiku 4.5) |
-| Deploy | Vercel — `prisma generate && next build` (schema via `npm run db:push` manual) |
+| Deploy | Vercel — `prisma generate && (prisma db push \|\| skip) && next build` |
 
 Env vars:
 ```
@@ -41,7 +41,7 @@ Sem autenticação. Sem suite de testes — type-check apenas via `npm run build
 ```
 prism-mais-vidas/
 ├── prisma/
-│   └── schema.prisma              # 13 modelos
+│   └── schema.prisma              # 14 modelos
 ├── src/
 │   ├── app/
 │   │   ├── layout.tsx             # Title="Prism · Tio Chico Shop"
@@ -58,6 +58,7 @@ prism-mais-vidas/
 │   │   ├── curva-abc/page.tsx     # Curva ABC de Vendas e Estoque (Pareto + giro/GMROI)
 │   │   ├── margem-contribuicao/   # Margem de contribuição por produto (rateio via DRE)
 │   │   ├── fluxo-projetado/page.tsx # Fluxo de caixa projetado (despesas fixas × receita)
+│   │   ├── marketing/page.tsx     # Indicadores de marketing/e-commerce por mês (cadastro manual)
 │   │   └── api/
 │   │       ├── accounts/route.ts             # GET lista, POST cria
 │   │       ├── accounts/[id]/route.ts        # PUT edita, DELETE remove
@@ -89,9 +90,11 @@ prism-mais-vidas/
 │   │       ├── abc/import/route.ts           # POST relatório Bling → SalesRecord (qtd vendida)
 │   │       ├── margem/route.ts               # GET/POST MarginProduct (catálogo geral)
 │   │       ├── despesas-fixas/route.ts       # GET/POST FixedExpense (contas a pagar futuras)
+│   │       ├── marketing/route.ts            # GET/POST MarketingMetric (upsert por mês/ano/unidade)
+│   │       ├── marketing/[id]/route.ts       # DELETE indicadores de um mês
 │   │       └── ai/chat/route.ts              # POST chat IA com contexto da DRE do mês
 │   ├── components/
-│   │   ├── Shell.tsx              # Layout: topbar "Prism · Tio Chico Shop" + sidebar (11 itens)
+│   │   ├── Shell.tsx              # Layout: topbar "Prism · Tio Chico Shop" + sidebar (12 itens)
 │   │   ├── AccountCombobox.tsx    # Combobox buscável por nome/código
 │   │   └── AIAssistant.tsx        # Assistente IA — DEFINIDO mas NÃO importado em nenhuma página
 │   └── lib/
@@ -211,6 +214,19 @@ unitId? · month · year · createdAt · @@index([month, year])
 ```
 Despesas fixas projetadas (contas a pagar futuras). Uma linha por despesa por mês/ano/unidade.
 Re-upload substitui apenas os períodos presentes no arquivo (não apaga os demais).
+
+### MarketingMetric — Indicadores de Marketing
+```
+id · month · year · unitId?
+revenueBilled(0) · revenueCaptured(0) · investment(0)
+sessions(0) · orders(0) · ticket(0) · conversionRate(0) · roas(0)
+cpa(0) · approvalRate(0) · paidTrafficPct(0) · notes? · createdAt
+@@index([month, year])
+```
+Uma linha por mês/ano/unidade. Guarda os valores REPORTADOS no fechamento mensal
+(ticket, ROAS, conversão etc. como vêm da fonte). Cadastro/edição manual via `/marketing`;
+`POST /api/marketing` faz upsert por (month, year, unitId). A página deriva só as
+variações mês-a-mês e os acumulados do ano.
 
 ---
 
@@ -396,12 +412,13 @@ não pode ser deletada se tiver transactions.
 
 ```bash
 npm run dev       # servidor local em http://localhost:3000
-npm run build     # build de produção (prisma generate && next build)
-npm run db:push   # aplica o schema no banco (rodar manualmente quando schema.prisma mudar)
+npm run build     # build de produção (prisma generate && (prisma db push || skip) && next build)
+npm run db:push   # aplica o schema no banco manualmente (ex.: Neon estava dormindo no build)
 npm run db:studio # Prisma Studio (editor visual do banco)
 git push          # Vercel auto-deploya
 ```
 
-> **Deploy não roda `prisma db push`** — isso falharia (P1001) sempre que o compute
-> do Neon free tier estivesse suspenso no momento do build. Alterações de schema são
-> aplicadas manualmente com `npm run db:push` (exige banco acordado / `DIRECT_URL`).
+> **Build tenta `prisma db push`, mas tolera falha** (`|| echo …`) — assim o compute
+> suspenso do Neon free tier (P1001) nunca quebra o deploy. Com o banco acordado, o
+> schema sincroniza sozinho; se estava dormindo num build que criou tabela nova,
+> basta re-deployar com o Neon acordado ou rodar `npm run db:push`.

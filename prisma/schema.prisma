@@ -21,6 +21,7 @@ model Unit {
   stockItems     StockItem[]
   marginProducts MarginProduct[]
   fixedExpenses  FixedExpense[]
+  marketingMetrics MarketingMetric[]
 }
 
 model BankAccount {
@@ -200,6 +201,33 @@ model MarginProduct {
   unit            Unit?    @relation(fields: [unitId], references: [id])
   month           Int
   year            Int
+  createdAt       DateTime @default(now())
+
+  @@index([month, year])
+}
+
+// Indicadores de Marketing / E-commerce por mês (fechamento mensal + Analytics).
+// Uma linha por mês/ano/unidade. Guarda os valores REPORTADOS no fechamento
+// (ticket, ROAS, conversão etc. como vêm da fonte) — a página deriva apenas as
+// variações mês-a-mês. Re-cadastro do mesmo período faz upsert (substitui a linha).
+model MarketingMetric {
+  id              Int      @id @default(autoincrement())
+  month           Int
+  year            Int
+  unitId          Int?
+  unit            Unit?    @relation(fields: [unitId], references: [id])
+  revenueBilled   Float    @default(0) // Receita Faturada
+  revenueCaptured Float    @default(0) // Receita Captada (site)
+  investment      Float    @default(0) // Investimento em mídia (total)
+  sessions        Int      @default(0)
+  orders          Int      @default(0) // Pedidos / transações
+  ticket          Float    @default(0) // Ticket médio reportado
+  conversionRate  Float    @default(0) // % (ex.: 1.16)
+  roas            Float    @default(0) // ROAS faturado reportado
+  cpa             Float    @default(0) // Custo por pedido reportado
+  approvalRate    Float    @default(0) // % de aprovação
+  paidTrafficPct  Float    @default(0) // % de tráfego pago
+  notes           String?
   createdAt       DateTime @default(now())
 
   @@index([month, year])

@@ -8,6 +8,7 @@ const NAV = [
   { href: '/compras', icon: '🛒', label: 'Compras' },
   { href: '/curva-abc', icon: '📈', label: 'Curva ABC' },
   { href: '/margem-contribuicao', icon: '🎯', label: 'Margem de Contribuição' },
+  { href: '/marketing', icon: '📣', label: 'Marketing' },
   { href: '/plano-de-contas', icon: '≡', label: 'Plano de Contas' },
   { href: '/lancamentos', icon: '↑↓', label: 'Lançamentos / OFX' },
   { href: '/saldo', icon: '◉', label: 'Saldo Bancário' },
