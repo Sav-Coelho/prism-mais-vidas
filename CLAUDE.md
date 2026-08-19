@@ -6,10 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm run dev          # dev server at http://localhost:3000
-npm run build        # production build (runs: prisma generate && prisma db push && next build)
+npm run build        # production build (runs: prisma generate && next build)
+npm run db:push      # push schema to DB (run manually when schema.prisma changes)
 npm run db:studio    # Prisma Studio (visual DB editor)
 git push             # triggers Vercel auto-deploy
 ```
+
+The build does **not** run `prisma db push` — that would fail whenever the Neon
+free-tier compute is suspended (P1001 unreachable) at build time. Push schema
+changes manually with `npm run db:push` (needs a live DB / `DIRECT_URL`).
 
 No test suite. Type-check only via `npm run build`.
 
@@ -19,7 +24,7 @@ Full-stack Next.js 14 App Router — pages and API routes in the same project. N
 
 **Key env vars:**
 - `DATABASE_URL` — Neon connection pooling URL (runtime)
-- `DIRECT_URL` — Neon direct URL (used by `prisma db push` at build)
+- `DIRECT_URL` — Neon direct URL (used by `npm run db:push`, run manually)
 
 Schema is managed with `prisma db push` (no migration files). On cold start, `prisma.ts` only seeds Account `9.9.01 — Transferência entre Contas`.
 

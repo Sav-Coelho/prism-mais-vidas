@@ -23,7 +23,7 @@ Banco: PostgreSQL Neon, região `sa-east-1` (São Paulo), free tier (0.5 GB)
 | Planilhas | xlsx |
 | PDF | pdf-parse (extrato de cartão Sicoob) |
 | IA | @anthropic-ai/sdk (rota `/api/ai/chat`, modelo Haiku 4.5) |
-| Deploy | Vercel — `prisma generate && prisma db push && next build` |
+| Deploy | Vercel — `prisma generate && next build` (schema via `npm run db:push` manual) |
 
 Env vars:
 ```
@@ -396,7 +396,12 @@ não pode ser deletada se tiver transactions.
 
 ```bash
 npm run dev       # servidor local em http://localhost:3000
-npm run build     # build de produção (prisma generate && prisma db push && next build)
+npm run build     # build de produção (prisma generate && next build)
+npm run db:push   # aplica o schema no banco (rodar manualmente quando schema.prisma mudar)
 npm run db:studio # Prisma Studio (editor visual do banco)
 git push          # Vercel auto-deploya
 ```
+
+> **Deploy não roda `prisma db push`** — isso falharia (P1001) sempre que o compute
+> do Neon free tier estivesse suspenso no momento do build. Alterações de schema são
+> aplicadas manualmente com `npm run db:push` (exige banco acordado / `DIRECT_URL`).
