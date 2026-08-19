@@ -1,11 +1,13 @@
-# CONTEXTO_PRISM — Referência técnica completa para Claude
+# CONTEXTO — Prism Mais Vidas
 
-Sistema financeiro da **Brave Educação** chamado **Prism DRE System**. Gerencia importação de extratos OFX, classificação de lançamentos e geração de DRE mensal por unidade.
+Sistema financeiro da **Brave Educação** operando para o cliente **Tio Chico Shop** —
+evolução do Prism DRE com módulos de Clientes, Vendas, Fornecedores, Ordens de Compra,
+Curva ABC, Margem de Contribuição por produto e Fluxo de Caixa Projetado.
 
 Dono/dev: Savio (savio@braveeducacao.com.br)
-Repositório: `github.com/Sav-Coelho/prism-financeiro` (branch `main`)
-Deploy: Vercel (hobby plan) — auto-deploy a cada push no main
-Banco: PostgreSQL na Neon, região `sa-east-1` (São Paulo), free tier
+Path local: `G:\.shortcut-targets-by-id\...\Tio Chico Shop\prism-mais-vidas\` (Google Drive)
+Deploy: Vercel (hobby) — auto-deploy a cada `git push` no main
+Banco: PostgreSQL Neon, região `sa-east-1` (São Paulo), free tier (0.5 GB)
 
 ---
 
@@ -15,291 +17,386 @@ Banco: PostgreSQL na Neon, região `sa-east-1` (São Paulo), free tier
 |--------|------|
 | Frontend | Next.js 14 (App Router) + TypeScript strict |
 | Backend | API Routes serverless (mesmo projeto) |
-| ORM | Prisma 5.10 |
+| ORM | Prisma 5 |
 | DB | PostgreSQL — Neon free (0.5 GB, 5h compute/mês) |
 | Gráficos | Recharts |
+| Planilhas | xlsx |
+| PDF | pdf-parse (extrato de cartão Sicoob) |
+| IA | @anthropic-ai/sdk (rota `/api/ai/chat`, modelo Haiku 4.5) |
 | Deploy | Vercel — `prisma generate && prisma db push && next build` |
 
-Env vars (Vercel):
+Env vars:
 ```
-DATABASE_URL=   # URL com connection pooling (runtime)
-DIRECT_URL=     # URL direta (para prisma db push no build)
+DATABASE_URL=       # Neon connection pooling (runtime)
+DIRECT_URL=         # Neon direct URL (para prisma db push no build)
+ANTHROPIC_API_KEY=  # Claude API — usado por /api/ai/chat
 ```
-`ANTHROPIC_API_KEY` está configurado mas o assistente IA foi desativado.
+
+Sem autenticação. Sem suite de testes — type-check apenas via `npm run build`.
 
 ---
 
 ## Estrutura de arquivos
 
 ```
-financeiro/
+prism-mais-vidas/
 ├── prisma/
-│   └── schema.prisma              # 5 modelos
+│   └── schema.prisma              # 13 modelos
 ├── src/
 │   ├── app/
-│   │   ├── layout.tsx             # Title="Prism DRE System", favicon losango amarelo
+│   │   ├── layout.tsx             # Title="Prism · Tio Chico Shop"
 │   │   ├── page.tsx               # Redirect → /dashboard
 │   │   ├── globals.css            # Sistema de design (sem biblioteca UI)
 │   │   ├── dashboard/page.tsx     # KPIs + gráfico DRE anual
-│   │   ├── dre/page.tsx           # DRE estruturado + gráfico anual + histórico
-│   │   ├── lancamentos/page.tsx   # Importação OFX + classificação (página principal, ~760 linhas)
+│   │   ├── dre/page.tsx           # DRE estruturado + gráfico anual
+│   │   ├── lancamentos/page.tsx   # Importação OFX/CSV/PDF + classificação (maior página, ~1150 linhas)
 │   │   ├── plano-de-contas/       # CRUD de contas do plano
 │   │   ├── saldo/page.tsx         # Evolução de saldo por conta bancária
-│   │   ├── unidades/              # CRUD de unidades e contas bancárias
+│   │   ├── unidades/              # CRUD dinâmico de unidades e contas bancárias
+│   │   ├── clientes/page.tsx      # Cadastro e listagem de clientes + vendas
+│   │   ├── compras/page.tsx       # Ordens de compra e fornecedores (~1240 linhas)
+│   │   ├── curva-abc/page.tsx     # Curva ABC de Vendas e Estoque (Pareto + giro/GMROI)
+│   │   ├── margem-contribuicao/   # Margem de contribuição por produto (rateio via DRE)
+│   │   ├── fluxo-projetado/page.tsx # Fluxo de caixa projetado (despesas fixas × receita)
 │   │   └── api/
 │   │       ├── accounts/route.ts             # GET lista, POST cria
 │   │       ├── accounts/[id]/route.ts        # PUT edita, DELETE remove
-│   │       ├── accounts/import/route.ts      # POST importação Excel/CSV
+│   │       ├── accounts/import/route.ts      # POST importação Excel do plano de contas
 │   │       ├── classify/suggest/route.ts     # POST sugestões Jaccard
-│   │       ├── dre/route.ts                  # GET DRE mensal + yearData
-│   │       ├── ofx/route.ts                  # POST salva lançamentos OFX em lote
+│   │       ├── dre/route.ts                  # GET DRE mensal (month=0 → ano) + yearData
+│   │       ├── ofx/route.ts                  # POST salva lançamentos em lote (OFX/CSV/PDF)
 │   │       ├── ofx/parse/route.ts            # POST parseia OFX → preview
+│   │       ├── pdf/parse/route.ts            # POST parseia extrato de cartão Sicoob (PDF)
 │   │       ├── saldo/route.ts                # GET snapshots de saldo
 │   │       ├── transactions/route.ts         # GET lista filtrada, POST cria
 │   │       ├── transactions/[id]/route.ts    # PUT classifica, DELETE remove
-│   │       └── units/route.ts               # GET unidades com bankAccounts aninhados
+│   │       ├── units/route.ts                # GET unidades com bankAccounts, POST cria
+│   │       ├── units/[id]/route.ts           # PUT/DELETE unidade
+│   │       ├── units/seed/route.ts           # POST seed das 5 unidades do Tio Chico Shop
+│   │       ├── bank-accounts/route.ts        # POST cria conta bancária
+│   │       ├── bank-accounts/[id]/route.ts   # PUT/DELETE conta bancária
+│   │       ├── clients/route.ts              # GET lista (inclui sales[]), POST cria
+│   │       ├── clients/[id]/route.ts         # GET/PUT/DELETE cliente
+│   │       ├── sales/route.ts                # GET lista (filtrável por clientId), POST cria
+│   │       ├── sales/[id]/route.ts           # DELETE venda
+│   │       ├── suppliers/route.ts            # GET lista, POST cria
+│   │       ├── suppliers/[id]/route.ts       # PUT/DELETE fornecedor
+│   │       ├── purchase-orders/route.ts      # GET lista, POST cria
+│   │       ├── purchase-orders/[id]/route.ts # PUT/DELETE ordem de compra
+│   │       ├── abc/vendas/route.ts           # GET/POST SalesRecord (Curva ABC de Vendas)
+│   │       ├── abc/estoque/route.ts          # GET/POST StockItem (Curva ABC de Estoque)
+│   │       ├── abc/inventario/route.ts       # POST inventário com custo → StockItem
+│   │       ├── abc/import/route.ts           # POST relatório Bling → SalesRecord (qtd vendida)
+│   │       ├── margem/route.ts               # GET/POST MarginProduct (catálogo geral)
+│   │       ├── despesas-fixas/route.ts       # GET/POST FixedExpense (contas a pagar futuras)
+│   │       └── ai/chat/route.ts              # POST chat IA com contexto da DRE do mês
 │   ├── components/
-│   │   ├── Shell.tsx              # Layout: topbar "Prism" + sidebar 6 itens
-│   │   └── AccountCombobox.tsx    # Combobox buscável por nome/código
+│   │   ├── Shell.tsx              # Layout: topbar "Prism · Tio Chico Shop" + sidebar (11 itens)
+│   │   ├── AccountCombobox.tsx    # Combobox buscável por nome/código
+│   │   └── AIAssistant.tsx        # Assistente IA — DEFINIDO mas NÃO importado em nenhuma página
 │   └── lib/
-│       ├── prisma.ts              # Singleton PrismaClient + seed automático
-│       ├── ofx-parser.ts          # Parser OFX (transações, saldo LEDGER, info banco)
+│       ├── prisma.ts              # Singleton PrismaClient + seed da conta 9.9.01
+│       ├── ofx-parser.ts          # Parser OFX (transações, LEDGERBAL, info banco)
+│       ├── sicoob-pdf-parser.ts   # Parser do extrato de cartão Sicoob (texto do PDF)
+│       ├── csv-parser.ts          # Parser CSV genérico (usado em /lancamentos)
+│       ├── spreadsheet.ts         # readSheetMatrix/findCol/parseNumberBR + sinônimos de coluna
+│       ├── abc.ts                 # calcABC() + calcStockMetrics() (giro/cobertura/GMROI)
 │       ├── dre.ts                 # calcDRE() + DRELineType + MONTH_NAMES
 │       └── classifier.ts          # tokenize() + jaccardSimilarity()
+├── CLAUDE.md                      # Guia técnico para Claude Code
+└── CONTEXTO_PRISM.md              # Este arquivo
 ```
 
 ---
 
-## Schema do banco (`prisma/schema.prisma`)
+## As três origens de dados
+
+O sistema tem **três fontes independentes** que só se cruzam em runtime (nunca persistem cruzadas):
+
+1. **OFX/CSV/PDF bancário → `Transaction`** — espinha dorsal contábil. Alimenta DRE, saldos e classificação.
+2. **Planilhas mensais → `SalesRecord` / `StockItem` / `MarginProduct` / `FixedExpense`** — analítica de varejo (Curva ABC, margem por produto, fluxo projetado).
+3. **Cadastro manual → `Client`/`Sale` e `Supplier`/`PurchaseOrder`** — CRM e compras, hoje desacoplados da contabilidade.
+
+---
+
+## Schema do banco (13 modelos)
 
 ### Unit
 ```
-id        Int     @id @default(autoincrement())
-name      String  @unique
-bankAccounts BankAccount[]
-transactions Transaction[]
+id   Int    @id @default(autoincrement())
+name String @unique
+bankAccounts BankAccount[]   transactions Transaction[]
+clients Client[]   sales Sale[]   purchaseOrders PurchaseOrder[]
+salesRecords SalesRecord[]   stockItems StockItem[]
+marginProducts MarginProduct[]   fixedExpenses FixedExpense[]
 ```
-Unidades fixas (criadas pelo seed): MATRIZ, CICERO, CIPO, NOVA SOURE, FERNANDA
+Sem seed automático no boot. Há um seed hardcoded opcional em `POST /api/units/seed`
+(MATRIZ, CICERO, CIPO, NOVA SOURE, FERNANDA + respectivas contas bancárias).
 
 ### BankAccount
 ```
-id             Int     @id
-name           String
-unitId         Int
-initialBalance Float   @default(0)
-ofxBankId      String? — identificador OFX (BANKID ou ORG do <FI>)
-ofxAcctId      String? — número da conta OFX (ACCTID)
-transactions     Transaction[]
-balanceSnapshots BalanceSnapshot[]
-```
-Usado para auto-identificar a conta ao importar OFX.
-
-Bancos pré-configurados no seed:
-```
-MATRIZ:     ITAU MATRIZ, BRADESCO MATRIZ, BNB MATRIZ, BB MATRIZ
-CICERO:     ITAU CICERO, BRADESCO CICERO
-CIPO:       ITAU CIPO, BRADESCO CIPO
-NOVA SOURE: ITAU NOVA SOURE, CAIXA NOVA SOURE
-FERNANDA:   ITAU FERNANDA, BRADESCO FERNANDA, BNB FERNANDA
+id Int @id · name String · unitId Int · initialBalance Float @default(0)
+ofxBankId String? — BANKID ou ORG do <FI> · ofxAcctId String? — ACCTID
+transactions Transaction[] · balanceSnapshots BalanceSnapshot[]
 ```
 
 ### Account (Plano de contas)
 ```
-id       Int     @id
-code     String  @unique  — ex: "3.1.1"
-name     String
-type     String           — RECEITA | DESPESA | ATIVO | PASSIVO | NEUTRO
-dreGroup String           — agrupa no DRE (ex: "Receita Operacional")
-active   Boolean @default(true)
+id Int @id · code String @unique (ex: "3.1.1") · name String
+type String — RECEITA | DESPESA | ATIVO | PASSIVO | NEUTRO
+dreGroup String · active Boolean @default(true) · createdAt DateTime
 ```
-**Conta especial:** `9.9.01 — Transferência entre Contas` (type=NEUTRO)
-- Aparece no topo do AccountCombobox com ícone ↔ e separador visual
-- Não entra nos totais do DRE, mas aparece na seção informativa
+Conta especial `9.9.01 — Transferência entre Contas` (type=NEUTRO) — seeded no boot
+(`prisma.ts`), nunca entra nos totais do DRE.
 
 ### Transaction
 ```
-id            Int      @id
-date          DateTime
-description   String
-amount        Float
-memo          String?
-fitid         String?  @unique  — previne duplicatas OFX
-accountId     Int?             — null = não classificado, não entra no DRE
-unitId        Int?
-bankAccountId Int?
-transferToUnitId        Int?   — preenchido quando é uma saída de transferência
-transferToBankAccountId Int?   — preenchido quando é uma saída de transferência
-month         Int              — índice para filtro
-year          Int              — índice para filtro
+id Int @id · date DateTime · description String · amount Float · memo String?
+fitid String? @unique — previne duplicatas OFX
+accountId Int? — null = não classificado, excluído do DRE
+unitId Int? · bankAccountId Int?
+transferToUnitId Int? · transferToBankAccountId Int? — saída de transferência
+month Int · year Int · createdAt DateTime
 ```
-
-**Lógica de transferências:**
-- Transação original (saída): `amount < 0`, `transferToUnitId` e `transferToBankAccountId` preenchidos
-- Contrapartida (entrada): criada automaticamente com `fitid = original_fitid + '_entrada'`, `amount = Math.abs(original)`, `unitId` e `bankAccountId` = destino da transferência
-- Ambas têm `accountId` apontando para `9.9.01 — Transferência entre Contas`
+Contrapartida de entrada criada automaticamente com `fitid = original + '_entrada'`.
 
 ### BalanceSnapshot
 ```
-id            Int     @id
-bankAccountId Int
-date          DateTime
-balance       Float
+id Int @id · bankAccountId Int · date DateTime · balance Float
 @@unique([bankAccountId, date])
 ```
-Um snapshot por conta por dia. Populado pelas linhas `isBalance` e pelo `<LEDGERBAL>` do OFX.
+
+### Client / Sale
+```
+Client: id · name · email? · phone? · cpf? · unitId? · active · createdAt · sales[]
+Sale:   id · clientId · description · amount · date · unitId? · month · year · createdAt
+```
+Fluxo independente do OFX — registros manuais de vendas vinculados a clientes.
+
+### Supplier / PurchaseOrder / PurchaseItem
+```
+Supplier:      id · name · cnpj? · contactName? · email? · phone? · paymentTermDays(30) · notes? · active
+PurchaseOrder: id · supplierId · unitId? · status(DRAFT) · expectedDate? · receivedDate?
+               totalAmount(0) · notes? · month · year · createdAt · updatedAt · items[]
+PurchaseItem:  id · orderId · description · quantity · unitPrice · receivedQty(0) · notes?
+```
+
+### SalesRecord  — Curva ABC de Vendas
+```
+id · product · sku? · category? · quantity(0) · revenue(0) · cost(0)
+unitId? · month · year · createdAt · @@index([month, year])
+```
+Uma linha por produto por mês/ano/unidade. Re-upload do mesmo período substitui.
+
+### StockItem — Curva ABC de Estoque + indicadores
+```
+id · product · sku? · category? · quantity(0) · unitCost(0)
+unitId? · month · year · createdAt · @@index([month, year])
+```
+Valor do estoque = quantity × unitCost. Cruzado com o CMV da DRE para giro/cobertura/GMROI.
+
+### MarginProduct — Análise de Margem de Contribuição
+```
+id · product · sku? · category? · salePrice(0) · replacementCost(0) · quantity(0)
+unitId? · month · year · createdAt · @@index([month, year])
+```
+Catálogo GERAL (não é por período): armazenado com `month=0, year=0`.
+Re-upload substitui todo o catálogo (opcionalmente escopado por unidade).
+O rateio de despesas é calculado em runtime a partir da DRE — não é armazenado.
+
+### FixedExpense — Fluxo de Caixa Projetado
+```
+id · description · category? · amount(0)
+unitId? · month · year · createdAt · @@index([month, year])
+```
+Despesas fixas projetadas (contas a pagar futuras). Uma linha por despesa por mês/ano/unidade.
+Re-upload substitui apenas os períodos presentes no arquivo (não apaga os demais).
 
 ---
 
-## Fluxo de Importação OFX (`/lancamentos`)
+## Fluxo de Importação Bancária (`/lancamentos`)
 
-### Parse (POST /api/ofx/parse)
+Aceita três formatos de entrada: **OFX** (banco), **CSV** e **PDF** (extrato de cartão Sicoob).
 
-1. Recebe arquivo `.OFX` via FormData
-2. **Detecta a conta bancária primeiro** (por `ofxBankId+ofxAcctId` ou `org+acctId`)
-3. Verifica duplicatas de `fitid` **escopadas à mesma conta bancária** — evita falsos positivos entre extratos de bancos diferentes
-4. Retorna: lista de transações com `alreadyImported`, `isBalance`, info do banco, `matchedBankAccount`, `ledgerBalance`
+**OFX:**
+1. `POST /api/ofx/parse` — parseia: detecta conta por `ofxBankId+ofxAcctId`, verifica duplicatas
+   de `fitid` escopadas à conta, marca `isBalance=true` se `TRNTYPE=BALANCE` ou memo `/^saldo\b/i`.
+   Retorna preview + `matchedBankAccount` + `ledgerBalance`.
+2. `POST /api/classify/suggest` — roda classificador Jaccard em background.
+3. UI: painel flutuante arrastável com sugestões (aceitar/negar por linha ou em lote).
+4. `POST /api/ofx` — salva em lote com `createMany({ skipDuplicates: true })`; cria contrapartidas
+   de transferência (`fitid + '_entrada'`); salva BalanceSnapshots; grava `ofxBankId/ofxAcctId` na
+   primeira vez.
 
-### Preview na UI (`lancamentos/page.tsx`)
-
-- Transações com `alreadyImported=true`: checkbox desabilitado, badge "já importada"
-- Transações com `isBalance=true`: sem combobox, badge "saldo", usadas apenas para BalanceSnapshot
-- Classificador inteligente roda em background → painel flutuante arrastável com sugestões
-- **Se conta selecionada for Transferência entre Contas:** aparecem dois selects em cascata:
-  - Unidade destino (todas as unidades)
-  - Conta bancária destino (contas da unidade selecionada)
-  - Auto-propagação Jaccard é bloqueada para transferências (cada uma tem destino diferente)
-
-### Save (POST /api/ofx)
-
-Recebe lista de transações com `accountId`, `unitId`, `transferToUnitId?`, `transferToBankAccountId?`.
-
-1. `createMany({ skipDuplicates: true })` — salva todas as transações originais
-2. Para transações com `transferToBankAccountId` preenchido: cria contrapartidas de entrada automaticamente
-3. Salva BalanceSnapshots (linhas `isBalance` + `LEDGERBAL`)
-4. Atualiza `ofxBankId/ofxAcctId` na conta bancária (primeira vez que o extrato é importado)
+**PDF de cartão Sicoob** (`/api/pdf/parse` → `sicoob-pdf-parser.ts`):
+- Extrai texto via `pdf-parse/lib/pdf-parse.js` (evita bug do index.js na Vercel).
+- Lida com data+descrição colados, transações multi-linha, moeda estrangeira (`V.DOL`),
+  seções "GASTOS DE [NOME]" ignoradas. Sinal invertido (positivo no extrato → despesa).
+- Devolve `invoiceMonth/invoiceYear` — no `POST /api/ofx` esses campos forçam a competência
+  no **mês da fatura**, não na data da compra.
 
 ---
 
-## Classificador Inteligente
-
-**Arquivo:** `src/lib/classifier.ts` + `src/app/api/classify/suggest/route.ts`
+## Classificador Inteligente (`src/lib/classifier.ts`)
 
 ```
 tokenize(memo): lowercase → remove dígitos → remove não-letras → split → filtra tokens > 2 chars
 jaccardSimilarity(A, B): |A∩B| / |A∪B|
 ```
-
-**API suggest:**
-1. Carrega até 10.000 transações classificadas do histórico (excluindo dreGroup = 'Transferência entre Contas')
-2. Deduplica: por memo único, mantém conta mais frequente
-3. Para cada memo novo, calcula similaridade com todas as referências
-4. Retorna sugestões com score ≥ 0.35 (confidence 0-100%)
-
-**Propagação em tempo real:** ao classificar uma linha manualmente, aplica a mesma conta nas linhas com similaridade ≥ 0.25 ainda não classificadas. Não propaga transferências.
-
-**Painel de sugestões:** flutuante, arrastável pelo header, minimizável. Aceitar/negar por linha ou em lote.
+- Threshold ≥ 0.35 para sugestões · propagação em tempo real ≥ 0.25.
+- Transferências excluídas do histórico e da propagação.
+- Usa `Array.from()` (nunca spread de Set) por causa do build da Vercel.
 
 ---
 
 ## DRE (`src/lib/dre.ts`)
 
-### Tipos
-```typescript
-export type DRELineType = 'section' | 'group' | 'account' | 'subtotal' | 'breakeven' | 'transfer'
 ```
-O tipo `'transfer'` renderiza com estilo separado (cinza azulado, linha tracejada) e não afeta nenhum total.
+type DRELineType = 'section' | 'group' | 'account' | 'subtotal' | 'breakeven' | 'transfer'
+```
 
-### calcDRE()
-
-Agrupa transações por `dreGroup`. Estrutura calculada:
+`calcDRE()` agrupa transações por `account.dreGroup`, usa `Math.abs()` e infere o sinal pelo grupo.
 
 ```
 Receita Operacional
-Deduções sobre a Venda
-= Receita Líquida de Vendas
+(-) Deduções sobre a Venda
+= Receita Líquida
 
-(-) Custos Variáveis
-  Custo do Produto/Serviço
-  Despesa Variável
+(-) Custos Variáveis (Custo do Produto/Serviço + Despesa Variável)
 = Margem de Contribuição
 = PEO (Ponto de Equilíbrio Operacional)
 
-(-) Custos Fixos
-  Despesas Administrativas
-  Despesas Financeiras
-  Despesas com Pessoal
-  Despesas com Marketing
+(-) Custos Fixos (Administrativas + Financeiras + Pessoal + Marketing + Comerciais)
 = Lucro Operacional (EBIT)
 = PEI (Ponto de Equilíbrio de Investimentos)
 
 (-) Investimentos
-= Lucro após os Investimentos
+= Lucro após Investimentos
 = PEF (Ponto de Equilíbrio Financeiro)
 
-(+/-) Outras Receitas e Despesas Não Operacionais
+(+/-) Receitas/Despesas Não Operacionais
 = Lucro antes dos Impostos
 
-Impostos
+(-) Impostos
 = Lucro Líquido
 
---- Transferências entre Contas (type='transfer', apenas informativo) ---
-  Saídas de Transferência
-  Entradas de Transferência
+--- Transferências entre Contas (informativo, type='transfer', não contabiliza) ---
 ```
 
-**Pontos de equilíbrio:**
-- `PEO = custosFixos / (margem / receitaOp)`
+Pontos de equilíbrio (`mcPct = margem / receitaOp`):
+- `PEO = custosFixos / mcPct`
 - `PEI = (custosFixos + invest) / mcPct`
-- `PEF = (custosFixos + invest + max(0, despNaoOp - recNaoOp)) / mcPct`
+- `PEF = (custosFixos + invest + max(0, despNaoOp − recNaoOp)) / mcPct`
 
-Filtro: `month`, `year`, `unitId` (opcional). Quando `unitId` é omitido, consolida todas as unidades.
+Rota `GET /api/dre`: `month=0` → DRE consolidada do ano; sempre devolve também `yearData` (12 meses).
 
 ---
 
-## Decisões técnicas
+## Curva ABC e Indicadores de Estoque (`src/lib/abc.ts`)
 
-### TypeScript / Vercel
-O target do compilador não suporta `for...of` em `Map`/`Set` nem spread de Set. **Sempre usar `Array.from()`:**
+`calcABC(items)`: ordena por valor decrescente, classifica pela % acumulada
+(**A** ≤ 80% · **B** ≤ 95% · **C** restante). Cores: A verde, B amarelo, C vermelho.
+
+`calcStockMetrics(estoqueValor, cmv, margemBruta, diasPeriodo=30)` — cruza estoque das planilhas
+com CMV/margem da DRE:
+```
+Giro      = CMV / Estoque médio (a custo)            → vezes no período
+Cobertura = Estoque médio / (CMV / dias do período)  → dias
+GMROI     = Margem Bruta / Estoque médio (a custo)   → R$ de margem por R$ investido
+```
+
+**Importadores de planilha** (`/curva-abc`, via `spreadsheet.ts` com detecção de coluna por sinônimos):
+- `/api/abc/vendas` — SalesRecord com faturamento/qtd/custo.
+- `/api/abc/estoque` — StockItem com qtd × custo unitário.
+- `/api/abc/inventario` — inventário com "Preço de Custo · Qtd. Estoque"; cabeçalhos de categoria em texto.
+- `/api/abc/import` — "Relatório de Saída de Produtos" do Bling (só "Quantidade Total" → Vendas).
+
+---
+
+## Margem de Contribuição por produto (`/margem-contribuicao`)
+
+Planilha traz Produto · Preço de Venda · Custo de Reposição · Qtd (opc. SKU/Categoria) → `MarginProduct`.
+
+Cálculo em runtime no cliente, cruzando com a DRE do mês de referência:
+```
+Margem de Contribuição = Preço − (Custo de Reposição + Despesas Variáveis)
+Taxa variável (% da receita) = (Deduções sobre a Venda + Despesa Variável) ÷ Receita Bruta
+```
+Custos **fixos não são rateados na margem** — cobrem-se via ponto de equilíbrio. O rateio para PEO
+por produto usa a participação de cada item no **preço de venda** (assim todo produto ganha um PEO).
+Suporta *overrides* de preço/custo para simulação (não persistidos).
+
+---
+
+## Fluxo de Caixa Projetado (`/fluxo-projetado`)
+
+Planilha de despesas fixas futuras (`FixedExpense`) em dois layouts:
+- **LARGO**: `Descrição | Categoria | Ago | Set | Out | ...` (uma coluna por mês).
+- **LONGO**: `Mês | Descrição | Valor` (uma linha por mês/despesa).
+
+Cruza as despesas fixas projetadas com a receita/DRE do ano para medir **comprometimento da receita**.
+Projeção estatística dos custos variáveis com cenários: Pessimista (−20%), Realista (média 3M),
+Otimista (+20%) e Nível atual (último mês). Aferição do custo fixo real contra o projetado.
+
+---
+
+## Assistente IA (`/api/ai/chat`)
+
+`POST` recebe `{ messages }`, monta um system prompt com o contexto da DRE do mês corrente
+(receita, resultados, plano de contas) e chama `claude-haiku-4-5-20251001` (máx 1024 tokens).
+O componente `AIAssistant.tsx` existe mas **não está montado em nenhuma página** — a rota é funcional,
+a UI ainda não foi conectada.
+
+---
+
+## Decisões técnicas importantes
+
+**TypeScript no Vercel** — o compilador alvo não suporta `for...of` em `Map`/`Set` nem spread `[...set]`:
 ```typescript
 // ❌ quebra no build
 const arr = [...set]
 for (const [k, v] of map) { }
-
 // ✅ correto
 const arr = Array.from(set)
 Array.from(map.entries()).forEach(([k, v]) => { })
 ```
 
-### Migrations
-Usa `prisma db push` (sem migration files versionadas). Schema-first: mudanças no schema são aplicadas diretamente no banco.
+**Race condition de fetch** — páginas com auto-seleção de mês (margem, fluxo projetado) usam um
+ref `loadSeq` para descartar respostas obsoletas: o auto-default troca o mês logo após a montagem,
+e o fetch do mês antigo pode chegar depois do novo, sobrescrevendo a DRE com o mês errado.
 
-### Seed automático
-`src/lib/prisma.ts` exporta o singleton do PrismaClient. Ao inicializar, chama `seedUnits()` e `seedTransferAccount()` com upsert — idempotente, roda em cada cold start sem problema.
+**Schema sem migrations** — usa `prisma db push` (schema-first, sem arquivos de migration versionados).
 
-### Fitid e duplicatas
-`fitid` é `@unique` no banco — impede duplicatas absolutas. A checagem de "já importado" no parse é escopada à mesma `bankAccountId` para não marcar como duplicata transações de bancos diferentes com o mesmo fitid.
+**Idempotência de import**:
+- OFX: `fitid @unique` + `skipDuplicates`.
+- Planilhas ABC/inventário/vendas: `deleteMany({ month, year, unitId })` + `createMany` transacional.
+- Margem: substitui todo o catálogo (`month=0, year=0`, escopado por unidade).
+- Despesas fixas: substitui apenas os períodos presentes no arquivo.
 
-### Batch save
-`createMany({ skipDuplicates: true })` salva todas as transações em 1 query SQL.
+**Seed mínimo no boot** — `prisma.ts` faz upsert apenas da conta `9.9.01`. Unidades e bancos são
+criados pelo usuário via UI (ou via `POST /api/units/seed` para carregar as 5 unidades do Tio Chico Shop).
+
+**Delete bloqueado** — unidade não pode ser deletada se tiver transactions ou sales; conta bancária
+não pode ser deletada se tiver transactions.
 
 ---
 
 ## Identidade visual
 
 - Fonte: **Bricolage Grotesque** (`--font-sub`)
-- Amarelo: `#eaca2d` (`--brave-yellow`)
-- Escuro: `var(--brave-dark)` (`#2b2d42`)
-- Sem biblioteca de UI — CSS inline + classes em `globals.css`: `.card`, `.btn`, `.btn-primary`, `.btn-danger`, `.btn-sm`, `.metric-card`, `.form-select`, `.form-input`, `.upload-zone`, `.table-wrap`, `.badge-neutro`, `.toast`, `.page-header`, `.page-title`
-- Favicon: `src/app/icon.svg` — losango amarelo simples
+- Amarelo: `#eaca2d` (`--brave-yellow`) · Escuro: `#2b2d42` (`--brave-dark`)
+- Sem biblioteca de UI — CSS inline + classes em `globals.css`:
+  `.card` `.btn` `.btn-primary` `.btn-danger` `.btn-sm` `.metric-card` `.form-select`
+  `.form-input` `.upload-zone` `.table-wrap` `.badge-neutro` `.toast` `.page-header` `.page-title`
+- Rodapé: "Desenvolvido por Delfos Research LTDA — Uso Restrito"
 
 ---
 
-## Comandos de desenvolvimento
+## Comandos
 
 ```bash
-cd "C:\Users\whohe\Projeto Claude\financeiro-mpf\financeiro"
-npm run dev          # servidor local em http://localhost:3000
-npm run db:studio    # Prisma Studio (editor visual do banco)
-npm run build        # build de produção
-git push             # Vercel auto-deploya
+npm run dev       # servidor local em http://localhost:3000
+npm run build     # build de produção (prisma generate && prisma db push && next build)
+npm run db:studio # Prisma Studio (editor visual do banco)
+git push          # Vercel auto-deploya
 ```
