@@ -58,25 +58,63 @@ export async function POST(req: NextRequest) {
   const imported = result.count
   const skipped = transactions.length - imported
 
-  // Create counterpart entry transactions for transfers
-  const transferTxs = transactions.filter(tx => tx.transferToBankAccountId && tx.accountId)
+  // ── Contrapartida de transferência ────────────────────────────────────────
+  // Só faz sentido criar a entrada espelho para SAÍDAS (amount < 0). Uma entrada
+  // classificada como transferência já É o dinheiro chegando — criar contrapartida
+  // duplicaria o valor na mesma conta.
+  const transferTxs = transactions.filter(tx =>
+    tx.transferToBankAccountId && tx.accountId && tx.amount < 0
+  )
+
+  let counterpartsCreated = 0
+  let counterpartsSkipped = 0
+
   if (transferTxs.length > 0) {
-    const counterparts = transferTxs.map(tx => {
-      const d = new Date(tx.date)
-      return {
-        fitid: tx.fitid + '_entrada',
-        date: d,
-        description: 'Entrada de Transferência - ' + tx.memo,
-        memo: 'Entrada de Transferência - ' + tx.memo,
-        amount: Math.abs(tx.amount),
-        month: d.getMonth() + 1,
-        year: d.getFullYear(),
-        accountId: tx.accountId ? parseInt(String(tx.accountId)) : null,
-        unitId: tx.transferToUnitId ? parseInt(String(tx.transferToUnitId)) : null,
-        bankAccountId: tx.transferToBankAccountId ? parseInt(String(tx.transferToBankAccountId)) : null,
-      }
+    // Se o extrato do banco de destino já foi importado, a entrada REAL existe com
+    // outro fitid — nesse caso não se cria a espelho, senão o valor entra duas vezes.
+    const destIds = Array.from(new Set(
+      transferTxs.map(tx => parseInt(String(tx.transferToBankAccountId)))
+    ))
+    const amounts = transferTxs.map(tx => Math.abs(tx.amount))
+    const existingReal = await prisma.transaction.findMany({
+      where: { bankAccountId: { in: destIds }, amount: { in: amounts } },
+      select: { bankAccountId: true, amount: true, date: true },
     })
-    await prisma.transaction.createMany({ data: counterparts, skipDuplicates: true })
+
+    const TOLERANCIA_DIAS = 3
+    const jaExisteReal = (tx: IncomingTx) => {
+      const destId = parseInt(String(tx.transferToBankAccountId))
+      const amt = Math.abs(tx.amount)
+      const when = new Date(tx.date).getTime()
+      return existingReal.some(r =>
+        r.bankAccountId === destId &&
+        Math.abs(r.amount - amt) < 0.01 &&
+        Math.abs(new Date(r.date).getTime() - when) <= TOLERANCIA_DIAS * 86400000
+      )
+    }
+
+    const pendentes = transferTxs.filter(tx => !jaExisteReal(tx))
+    counterpartsSkipped = transferTxs.length - pendentes.length
+
+    if (pendentes.length > 0) {
+      const counterparts = pendentes.map(tx => {
+        const d = new Date(tx.date)
+        return {
+          fitid: tx.fitid + '_entrada',
+          date: d,
+          description: 'Entrada de Transferência - ' + tx.memo,
+          memo: 'Entrada de Transferência - ' + tx.memo,
+          amount: Math.abs(tx.amount),
+          month: d.getMonth() + 1,
+          year: d.getFullYear(),
+          accountId: tx.accountId ? parseInt(String(tx.accountId)) : null,
+          unitId: tx.transferToUnitId ? parseInt(String(tx.transferToUnitId)) : null,
+          bankAccountId: parseInt(String(tx.transferToBankAccountId)),
+        }
+      })
+      const res = await prisma.transaction.createMany({ data: counterparts, skipDuplicates: true })
+      counterpartsCreated = res.count
+    }
   }
 
   // Save balance snapshots (daily + ledger) in parallel
@@ -123,5 +161,5 @@ export async function POST(req: NextRequest) {
 
   await Promise.all([...snapshotOps, linkOp])
 
-  return NextResponse.json({ imported, skipped })
+  return NextResponse.json({ imported, skipped, counterpartsCreated, counterpartsSkipped })
 }
