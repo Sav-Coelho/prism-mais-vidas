@@ -807,9 +807,15 @@ function TabCruzamentoDRE({ orders, suppliers, units }: {
   useEffect(() => {
     setLoading(true)
     const up = unitId ? `&unitId=${unitId}` : ''
+    // Estoque: carga histórica do mês, se existir; senão a posição GERAL (relatório de Produtos)
+    const estoqueMes = fetch(`/api/abc/estoque?month=${month}&year=${year}${up}`)
+      .then(r => r.ok ? r.json() : []).catch(() => [])
+      .then((s: any[]) => Array.isArray(s) && s.length > 0
+        ? s
+        : fetch(`/api/abc/estoque${unitId ? `?unitId=${unitId}` : ''}`).then(r => r.ok ? r.json() : []).catch(() => []))
     Promise.all([
       fetch(`/api/dre?month=${month}&year=${year}${up}`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`/api/abc/estoque?month=${month}&year=${year}${up}`).then(r => r.json()).catch(() => []),
+      estoqueMes,
     ]).then(([d, s]) => { setDre(d?.dre ?? null); setStock(Array.isArray(s) ? s : []); setLoading(false) })
   }, [month, year, unitId])
 

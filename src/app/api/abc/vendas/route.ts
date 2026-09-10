@@ -10,9 +10,15 @@ export async function GET(req: NextRequest) {
   const year = searchParams.get('year')
   const unitId = searchParams.get('unitId')
 
+  // Sem mês/ano → conjunto GERAL (month=0/year=0), usado pelo relatório único de Produtos.
   const where: Record<string, unknown> = {}
-  if (month) where.month = parseInt(month)
-  if (year) where.year = parseInt(year)
+  if (month || year) {
+    if (month) where.month = parseInt(month)
+    if (year) where.year = parseInt(year)
+  } else {
+    where.month = 0
+    where.year = 0
+  }
   if (unitId) where.unitId = parseInt(unitId)
 
   const records = await prisma.salesRecord.findMany({

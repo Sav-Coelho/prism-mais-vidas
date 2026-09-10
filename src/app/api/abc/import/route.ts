@@ -19,13 +19,14 @@ const CATEGORY_RE = /^(.+?)\s*\(\s*\d+\s*ite[mn]s?\s*\)\s*$/i
 export async function POST(req: NextRequest) {
   const formData = await req.formData()
   const file = formData.get('file') as File | null
-  const month = parseInt(String(formData.get('month') || ''))
-  const year = parseInt(String(formData.get('year') || ''))
+  // Sem mês/ano → conjunto GERAL (month=0/year=0): o relatório de Produtos é único e
+  // cada envio substitui o anterior. Mês/ano continuam aceitos para cargas históricas.
+  const month = parseInt(String(formData.get('month') || '0')) || 0
+  const year = parseInt(String(formData.get('year') || '0')) || 0
   const unitRaw = formData.get('unitId')
   const unitId = unitRaw ? parseInt(String(unitRaw)) : null
 
   if (!file) return NextResponse.json({ error: 'Arquivo não enviado' }, { status: 400 })
-  if (!month || !year) return NextResponse.json({ error: 'Mês e ano são obrigatórios' }, { status: 400 })
 
   let matrix: string[][]
   try {
