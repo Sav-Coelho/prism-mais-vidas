@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { parseOFX } from '@/lib/ofx-parser'
+import { contentKey, flagDuplicates } from '@/lib/dedup'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
@@ -54,14 +55,39 @@ export async function POST(req: NextRequest) {
   })
   const existingSet = new Set(existing.map(e => e.fitid))
 
-  const transactions = parsed.map(tx => {
+  // Além do FITID, confere por CONTEÚDO (data + valor + descrição): o FITID do Sicoob
+  // muda de uma exportação para outra e a mesma fatura pode vir em PDF/CSV/OFX. Sem
+  // isso a prévia diria "novo" para algo que já está lançado — o caso das parcelas e
+  // dos lançamentos recorrentes de mesmo valor. Ver src/lib/dedup.ts.
+  const tempos = parsed.map(tx => tx.date.getTime()).filter(t => !isNaN(t))
+  let jaLancado: boolean[] = parsed.map(() => false)
+  if (tempos.length > 0) {
+    const minDate = new Date(tempos.reduce((a, b) => (b < a ? b : a), tempos[0]))
+    const maxDate = new Date(tempos.reduce((a, b) => (b > a ? b : a), tempos[0]))
+    minDate.setHours(0, 0, 0, 0)
+    maxDate.setHours(23, 59, 59, 999)
+    const noPeriodo = await prisma.transaction.findMany({
+      where: {
+        bankAccountId: matchedBankAccount ? matchedBankAccount.id : null,
+        date: { gte: minDate, lte: maxDate },
+      },
+      select: { date: true, amount: true, description: true },
+    })
+    jaLancado = flagDuplicates(
+      parsed,
+      tx => contentKey(tx.date, tx.amount, tx.memo),
+      noPeriodo.map(e => contentKey(e.date, e.amount, e.description))
+    )
+  }
+
+  const transactions = parsed.map((tx, i) => {
     const fitid = mkFitid(tx.fitid)
     return {
       fitid,
       date: tx.date.toISOString(),
       amount: tx.amount,
       memo: tx.memo,
-      alreadyImported: existingSet.has(fitid),
+      alreadyImported: existingSet.has(fitid) || jaLancado[i],
       isBalance: tx.isBalance,
     }
   })

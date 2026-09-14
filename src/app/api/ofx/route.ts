@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { contentKey, flagDuplicates } from '@/lib/dedup'
 import { NextRequest, NextResponse } from 'next/server'
 
 interface IncomingTx {
@@ -54,7 +55,42 @@ export async function POST(req: NextRequest) {
     }
   })
 
-  const result = await prisma.transaction.createMany({ data, skipDuplicates: true })
+  // ── Rede de proteção contra duplicatas por CONTEÚDO ───────────────────────
+  // O FITID do Sicoob embute uma sequência que muda a cada exportação do extrato, e
+  // a mesma fatura pode chegar em PDF (sicoob_*), CSV (csv_*) ou OFX (card_*) — três
+  // namespaces para a mesma compra. Quem depende da sequência para se distinguir são
+  // os itens de valor repetido: parcelas, mensalidades, PIX recorrentes. Comparar
+  // data+valor+descrição por multiplicidade impede a dupla contagem sem bloquear dois
+  // lançamentos legítimos de mesmo valor no mesmo dia. Ver src/lib/dedup.ts.
+  const tempos = data.map(d => d.date.getTime()).filter(t => !isNaN(t))
+  let duplicadosPorConteudo = 0
+  let aInserir = data
+
+  if (tempos.length > 0) {
+    const minDate = new Date(tempos.reduce((a, b) => (b < a ? b : a), tempos[0]))
+    const maxDate = new Date(tempos.reduce((a, b) => (b > a ? b : a), tempos[0]))
+    minDate.setHours(0, 0, 0, 0)
+    maxDate.setHours(23, 59, 59, 999)
+
+    const existentes = await prisma.transaction.findMany({
+      // Mesmo escopo do arquivo: a conta bancária do extrato, ou os lançamentos de
+      // fatura (bankAccountId nulo) quando é cartão.
+      where: { bankAccountId: bankAccId ?? null, date: { gte: minDate, lte: maxDate } },
+      select: { date: true, amount: true, description: true },
+    })
+
+    const jaExiste = flagDuplicates(
+      data,
+      d => contentKey(d.date, d.amount, d.description),
+      existentes.map(e => contentKey(e.date, e.amount, e.description))
+    )
+    aInserir = data.filter((_, i) => !jaExiste[i])
+    duplicadosPorConteudo = data.length - aInserir.length
+  }
+
+  const result = aInserir.length > 0
+    ? await prisma.transaction.createMany({ data: aInserir, skipDuplicates: true })
+    : { count: 0 }
   const imported = result.count
   const skipped = transactions.length - imported
 
@@ -161,5 +197,5 @@ export async function POST(req: NextRequest) {
 
   await Promise.all([...snapshotOps, linkOp])
 
-  return NextResponse.json({ imported, skipped, counterpartsCreated, counterpartsSkipped })
+  return NextResponse.json({ imported, skipped, duplicadosPorConteudo, counterpartsCreated, counterpartsSkipped })
 }

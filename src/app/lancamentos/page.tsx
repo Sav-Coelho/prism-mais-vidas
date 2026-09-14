@@ -482,7 +482,12 @@ export default function Lancamentos() {
     const data = await res.json()
     if (res.ok) {
       const saldoMsg = ledgerBalance ? ` · Saldo ${fmt(ledgerBalance.amount)} salvo` : ''
-      showToast(`✓ ${data.imported} importadas${data.skipped ? `, ${data.skipped} ignoradas` : ''}${saldoMsg}`)
+      // Duplicatas barradas por conteúdo (data+valor+descrição) — o caso das parcelas e
+      // dos recorrentes de mesmo valor, cujo FITID muda de uma exportação para outra.
+      const dupMsg = data.duplicadosPorConteudo
+        ? ` · ${data.duplicadosPorConteudo} já lançadas (não duplicadas)`
+        : ''
+      showToast(`✓ ${data.imported} importadas${data.skipped ? `, ${data.skipped} ignoradas` : ''}${dupMsg}${saldoMsg}`)
       resetPreview()
       load()
     } else {

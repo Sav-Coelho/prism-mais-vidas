@@ -38,7 +38,6 @@ export function parseOFX(content: string): OFXParseResult {
   while ((match = stmtRegex.exec(text)) !== null) {
     const block = match[1]
 
-    const fitid = extractTag(block, 'FITID') || `auto_${Date.now()}_${Math.random()}`
     const dateRaw = extractTag(block, 'DTPOSTED') || ''
     const amountRaw = extractTag(block, 'TRNAMT') || '0'
     const memo = extractTag(block, 'MEMO') || extractTag(block, 'NAME') || 'Sem descrição'
@@ -46,6 +45,12 @@ export function parseOFX(content: string): OFXParseResult {
 
     const date = parseOFXDate(dateRaw)
     const amount = parseFloat(amountRaw.replace(',', '.'))
+
+    // Sem FITID no arquivo, deriva um id ESTÁVEL do próprio conteúdo. Antes usava-se
+    // `Date.now() + Math.random()`, que gerava id novo a cada leitura do mesmo arquivo
+    // e fazia a reimportação duplicar tudo.
+    const fitid = extractTag(block, 'FITID')
+      || `noid_${stableHash(`${dateRaw}|${amountRaw}|${memo}|${trntype}`)}`
 
     if (date && !isNaN(amount)) {
       const isBalance = trntype.toUpperCase() === 'BALANCE' || /^saldo\b/i.test(memo.trim())
@@ -83,6 +88,16 @@ function extractLedgerBalance(text: string): OFXBalance | null {
   const amount = parseFloat(amountRaw.replace(',', '.'))
   if (isNaN(amount)) return null
   return { amount, date: dateRaw ? parseOFXDate(dateRaw) : null }
+}
+
+/** Hash determinístico (FNV-1a) — mesmo conteúdo, mesmo id, em qualquer importação. */
+function stableHash(s: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
 }
 
 function extractTag(block: string, tag: string): string | null {
