@@ -21,6 +21,7 @@ const fmtK = (v: number) => {
 }
 const fmtInt = (v: number) => new Intl.NumberFormat('pt-BR').format(Math.round(v))
 const pctStr = (v: number) => `${(v * 100).toFixed(1)}%`
+const fmtCambio = (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 const GRID = '#edf2f4'
 const AXIS = '#c3cbd7'
@@ -104,6 +105,9 @@ export default function ImportacaoPage() {
 
   const itensValidos = useMemo(() => itens.filter(i => i.quantidade > 0 && i.precoFobUnit > 0), [itens])
   const temDados = itensValidos.length > 0
+  // Há base para comparar com o mercado interno? Distingue "não preenchido" de
+  // "preenchido, mas importar já saiu mais caro" — situações bem diferentes.
+  const temComparacao = itensValidos.some(i => (i.custoNacionalAtual || 0) > 0)
 
   const r = useMemo(() => calcImportacao(params, itensValidos, varRatePct), [params, itensValidos, varRatePct])
   const fluxo = useMemo(() => calcFluxoImportacao(params, r), [params, r])
@@ -501,18 +505,24 @@ export default function ImportacaoPage() {
             <div className="grid-2" style={{ gap: 16, marginTop: 8 }}>
               <div style={{ padding: '10px 14px', background: 'var(--brave-light)', borderRadius: 8 }}>
                 <div style={{ fontSize: 11, color: 'var(--brave-gray-mid)', fontWeight: 600, marginBottom: 2 }}>Câmbio de equilíbrio</div>
-                <div style={{ fontSize: 17, fontFamily: 'var(--font-sub)', fontWeight: 700 }}>{cEquil == null ? '—' : `R$ ${cEquil.toFixed(2)}`}</div>
+                <div style={{ fontSize: 17, fontFamily: 'var(--font-sub)', fontWeight: 700 }}>{cEquil == null ? '—' : fmtCambio(cEquil)}</div>
                 <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>
-                  {cEquil == null ? 'a operação não empata dentro da faixa simulada' : <>acima disso a margem do lote zera — é {((cEquil / params.cambio - 1) * 100).toFixed(0)}% acima do câmbio atual</>}
+                  {cEquil == null
+                    ? (r.mcTotal <= 0 ? 'a margem do lote já está negativa no câmbio atual' : 'a operação não empata dentro da faixa simulada')
+                    : <>acima disso a margem do lote zera — é {((cEquil / params.cambio - 1) * 100).toFixed(0)}% acima do câmbio atual</>}
                 </div>
               </div>
               <div style={{ padding: '10px 14px', background: 'var(--brave-light)', borderRadius: 8 }}>
                 <div style={{ fontSize: 11, color: 'var(--brave-gray-mid)', fontWeight: 600, marginBottom: 2 }}>Paridade com o importador nacional</div>
-                <div style={{ fontSize: 17, fontFamily: 'var(--font-sub)', fontWeight: 700 }}>{cParid == null ? '—' : `R$ ${cParid.toFixed(2)}`}</div>
+                <div style={{ fontSize: 17, fontFamily: 'var(--font-sub)', fontWeight: 700, color: temComparacao && cParid == null ? CRITICAL : undefined }}>
+                  {cParid != null ? fmtCambio(cParid) : temComparacao ? 'já não compensa' : '—'}
+                </div>
                 <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>
-                  {cParid == null
-                    ? 'preencha o custo nacional dos itens para calcular'
-                    : <>acima disso é melhor comprar de importador brasileiro do que trazer da China</>}
+                  {cParid != null
+                    ? <>acima disso é melhor comprar de importador brasileiro do que trazer da China</>
+                    : temComparacao
+                      ? <>no câmbio atual o lote sai <strong>{fmtBRL(Math.abs(r.economiaVsNacional || 0))}</strong> mais caro do que comprar no Brasil — veja na tabela quais itens ainda compensam</>
+                      : 'preencha o custo nacional dos itens para calcular'}
                 </div>
               </div>
             </div>
