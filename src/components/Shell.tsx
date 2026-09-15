@@ -7,6 +7,7 @@ const NAV = [
   { href: '/clientes', icon: '👤', label: 'Clientes' },
   { href: '/compras', icon: '🛒', label: 'Compras' },
   { href: '/produtos', icon: '📈', label: 'Produtos · ABC & Margem' },
+  { href: '/importacao', icon: '🚢', label: 'Simulador de Importação' },
   { href: '/marketing', icon: '📣', label: 'Marketing' },
   { href: '/plano-de-contas', icon: '≡', label: 'Plano de Contas' },
   { href: '/lancamentos', icon: '↑↓', label: 'Lançamentos / OFX' },
