@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { parseOFX } from '@/lib/ofx-parser'
-import { contentKey, flagDuplicates, normalizeDesc, stableHash } from '@/lib/dedup'
+import { contentKey, flagDuplicates, normalizeDesc, stableHash, escopoOrigem } from '@/lib/dedup'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     maxDate.setHours(23, 59, 59, 999)
     const noPeriodo = await prisma.transaction.findMany({
       where: {
-        bankAccountId: matchedBankAccount ? matchedBankAccount.id : null,
+        ...escopoOrigem(cardMode, matchedBankAccount ? matchedBankAccount.id : null),
         date: { gte: minDate, lte: maxDate },
       },
       select: { date: true, amount: true, description: true },

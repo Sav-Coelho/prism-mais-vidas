@@ -29,6 +29,22 @@
  * o mesmo arquivo não insere nada.
  */
 
+/**
+ * Escopo de comparação: fatura de cartão só dedupa contra fatura de cartão, e extrato
+ * bancário só contra extrato. A conta bancária NÃO serve para separar os dois — os
+ * lançamentos de fatura são gravados com o `bankAccountId` do Sicoob (2), o mesmo do
+ * extrato. Sem esta separação, "IOF OPERACAO EXTERIOR" do extrato barraria o IOF da
+ * fatura, e vice-versa. Os prefixos de fitid são o que identifica a origem.
+ */
+export const PREFIXOS_CARTAO = ['card_', 'sicoob_', 'csv_']
+
+export function escopoOrigem(cardMode: boolean, bankAccountId: number | null) {
+  const ehCartao = { OR: PREFIXOS_CARTAO.map(p => ({ fitid: { startsWith: p } })) }
+  return cardMode
+    ? ehCartao
+    : { bankAccountId: bankAccountId ?? null, NOT: ehCartao }
+}
+
 /** Hash determinístico (FNV-1a): mesmo conteúdo, mesmo id, em qualquer importação. */
 export function stableHash(s: string): string {
   let h = 0x811c9dc5

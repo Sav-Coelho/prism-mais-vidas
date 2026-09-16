@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { contentKey, flagDuplicates } from '@/lib/dedup'
+import { contentKey, flagDuplicates, escopoOrigem } from '@/lib/dedup'
 import { NextRequest, NextResponse } from 'next/server'
 
 interface IncomingTx {
@@ -72,10 +72,10 @@ export async function POST(req: NextRequest) {
     minDate.setHours(0, 0, 0, 0)
     maxDate.setHours(23, 59, 59, 999)
 
+    // Fatura de cartão é reconhecida por vir com mês/ano de competência próprios.
+    const cardMode = invoiceMonth != null && invoiceYear != null
     const existentes = await prisma.transaction.findMany({
-      // Mesmo escopo do arquivo: a conta bancária do extrato, ou os lançamentos de
-      // fatura (bankAccountId nulo) quando é cartão.
-      where: { bankAccountId: bankAccId ?? null, date: { gte: minDate, lte: maxDate } },
+      where: { ...escopoOrigem(cardMode, bankAccId), date: { gte: minDate, lte: maxDate } },
       select: { date: true, amount: true, description: true },
     })
 
