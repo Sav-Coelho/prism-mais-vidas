@@ -1,3 +1,5 @@
+import { stableHash } from './dedup'
+
 export interface OFXTransaction {
   fitid: string
   date: Date
@@ -88,16 +90,6 @@ function extractLedgerBalance(text: string): OFXBalance | null {
   const amount = parseFloat(amountRaw.replace(',', '.'))
   if (isNaN(amount)) return null
   return { amount, date: dateRaw ? parseOFXDate(dateRaw) : null }
-}
-
-/** Hash determinístico (FNV-1a) — mesmo conteúdo, mesmo id, em qualquer importação. */
-function stableHash(s: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i)
-    h = Math.imul(h, 0x01000193) >>> 0
-  }
-  return h.toString(16).padStart(8, '0')
 }
 
 function extractTag(block: string, tag: string): string | null {

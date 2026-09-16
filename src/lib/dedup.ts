@@ -29,6 +29,16 @@
  * o mesmo arquivo não insere nada.
  */
 
+/** Hash determinístico (FNV-1a): mesmo conteúdo, mesmo id, em qualquer importação. */
+export function stableHash(s: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
+}
+
 /** Remove acentos, colapsa espaços e baixa a caixa — o mesmo item vindo de PDF e de OFX converge. */
 export function normalizeDesc(s: string | null | undefined): string {
   return String(s || '')
@@ -38,12 +48,24 @@ export function normalizeDesc(s: string | null | undefined): string {
     .trim()
 }
 
-/** `AAAA-MM-DD|-1234.56|descricao normalizada` */
+/**
+ * `AAAA-MM-DD|-1234.56|descricao normalizada`
+ *
+ * A data é lida como DIA DE CALENDÁRIO. Cuidado necessário: `new Date('2026-03-24')`
+ * é interpretado como meia-noite UTC e, no fuso -03, vira 23/03 no horário local —
+ * a mesma transação geraria chaves diferentes conforme a origem trouxesse a data com
+ * ou sem hora. Por isso a string só-data é lida diretamente, sem passar por Date.
+ */
 export function contentKey(date: Date | string, amount: number, description: string | null | undefined): string {
-  const d = date instanceof Date ? date : new Date(date)
-  const dk = isNaN(d.getTime())
-    ? 'sem-data'
-    : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  let dk: string
+  if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+    dk = date.trim()
+  } else {
+    const d = date instanceof Date ? date : new Date(date)
+    dk = isNaN(d.getTime())
+      ? 'sem-data'
+      : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
   return `${dk}|${Number(amount).toFixed(2)}|${normalizeDesc(description)}`
 }
 

@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { parseOFX } from '@/lib/ofx-parser'
-import { contentKey, flagDuplicates } from '@/lib/dedup'
+import { contentKey, flagDuplicates, normalizeDesc, stableHash } from '@/lib/dedup'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
@@ -20,7 +20,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Nenhuma transação encontrada no arquivo OFX' }, { status: 422 })
   }
 
-  const mkFitid = (f: string) => (cardMode ? `card_${f}` : f)
+  // Na fatura de cartão o FITID do Sicoob é <data><valor><sequência> e NÃO inclui a
+  // parcela: a 05/06 de uma compra tem a MESMA data, o MESMO valor e, portanto, o
+  // MESMO FITID da 04/06. Sem discriminar, cada parcela seguinte seria tomada por já
+  // lançada e nunca entraria. O que distingue uma parcela da outra é o memo, então
+  // ele entra no id (normalizado, para não variar com espaçamento entre exportações).
+  const mkFitid = (tx: { fitid: string; memo: string }) =>
+    cardMode ? `card_${tx.fitid}_${stableHash(normalizeDesc(tx.memo)).slice(0, 6)}` : tx.fitid
 
   // Detect bank account first so fitid check can be scoped to the same account
   let matchedBankAccount: { id: number; name: string; unitId: number; unitName: string } | null = null
@@ -45,7 +51,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Scope duplicate check to the matched bank account to avoid false positives across different banks
-  const fitids = parsed.map(tx => mkFitid(tx.fitid)).filter(Boolean) as string[]
+  const fitids = parsed.map(tx => mkFitid(tx)).filter(Boolean) as string[]
   const existing = await prisma.transaction.findMany({
     where: {
       fitid: { in: fitids },
@@ -81,7 +87,7 @@ export async function POST(req: NextRequest) {
   }
 
   const transactions = parsed.map((tx, i) => {
-    const fitid = mkFitid(tx.fitid)
+    const fitid = mkFitid(tx)
     return {
       fitid,
       date: tx.date.toISOString(),
