@@ -44,6 +44,33 @@ const PARAMS_PADRAO: ImportParams = {
   prazoDesembaraco: 10, prazoInterno: 5, prazoVenda: 90, prazoRecebimento: 20,
 }
 
+// ── Exemplo de demonstração ──────────────────────────────────────────────────
+// Lote com os campeões de venda do próprio catálogo, para a tela abrir com algo
+// reconhecível. Preços FOB são ILUSTRATIVOS — a invoice real substitui tudo.
+const EXEMPLO_PARAMS: ImportParams = {
+  ...PARAMS_PADRAO,
+  cambio: 5.50, freteInternacional: 2200, seguroPct: 0.3,
+  despachante: 1800, armazenagem: 2200, freteInterno: 900,
+}
+
+const EXEMPLO_ITENS: Omit<ImportItem, 'key'>[] = [
+  { produto: 'Lanterna de Cabeça Pilha Ideal para Legendarios 20hrs de Luz', sku: '4019', ncm: '8513.10.10',
+    quantidade: 2000, precoFobUnit: 1.85, pesoUnitKg: 0.12, iiAliqPct: 18, ipiAliqPct: 0, precoVenda: 69.50, custoNacionalAtual: 21.72 },
+  { produto: 'Lanterna de Cabeça Led V3 Ceramic USB JWS Alcance 1000mts Ws161', sku: '3748', ncm: '8513.10.10',
+    quantidade: 600, precoFobUnit: 7.20, pesoUnitKg: 0.18, iiAliqPct: 18, ipiAliqPct: 0, precoVenda: 204.50, custoNacionalAtual: 85.50 },
+  { produto: 'Farol Bike Lente Amarela 50w Controle sem Fio Encaixe Gopro WS-5265', sku: '4943', ncm: '8512.10.00',
+    quantidade: 300, precoFobUnit: 9.50, pesoUnitKg: 0.32, iiAliqPct: 18, ipiAliqPct: 0, precoVenda: 249.50, custoNacionalAtual: 76.50 },
+  { produto: 'Lanterna Traseira Bike Brake Light Usb Sensor Freio 37 Horas JW-5230', sku: '3872', ncm: '8512.20.00',
+    quantidade: 500, precoFobUnit: 2.60, pesoUnitKg: 0.06, iiAliqPct: 18, ipiAliqPct: 0, precoVenda: 78.50, custoNacionalAtual: 35.00 },
+  { produto: 'Farol Bike 6 Leds Engate Garmin Gopro Power Bank 2800 Lumens', sku: '4953', ncm: '8512.10.00',
+    quantidade: 250, precoFobUnit: 5.90, pesoUnitKg: 0.38, iiAliqPct: 18, ipiAliqPct: 0, precoVenda: 259.50, custoNacionalAtual: 72.00 },
+  { produto: 'Bateria 26650 3,7v P/ Lanterna tática 8.800mAh JWS Original', sku: '3597', ncm: '8507.60.00',
+    quantidade: 1200, precoFobUnit: 1.15, pesoUnitKg: 0.09, iiAliqPct: 18, ipiAliqPct: 0, precoVenda: 39.50, custoNacionalAtual: 15.00 },
+  // Produto novo: ainda sem preço de venda — mostra como a tela trata esse caso
+  { produto: 'Lampião Solar Camping 2 em 1 (produto novo)', sku: null, ncm: '8513.10.90',
+    quantidade: 400, precoFobUnit: 4.30, pesoUnitKg: 0.41, iiAliqPct: 18, ipiAliqPct: 0, precoVenda: 0, custoNacionalAtual: 0 },
+]
+
 const novoItem = (): ImportItem => ({
   key: `i${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
   produto: '', sku: null, ncm: '', quantidade: 0, precoFobUnit: 0, pesoUnitKg: 0,
@@ -77,6 +104,7 @@ export default function ImportacaoPage() {
   const [toast, setToast] = useState('')
   const [ajuda, setAjuda] = useState(true)
   const [importando, setImportando] = useState(false)
+  const [exemplo, setExemplo] = useState(false)
   const [dragPlanilha, setDragPlanilha] = useState(false)
   const planilhaRef = useRef<HTMLInputElement>(null)
   const carregado = useRef(false)
@@ -176,6 +204,13 @@ export default function ImportacaoPage() {
     setImportando(false)
   }
 
+  const carregarExemplo = () => {
+    setParams(EXEMPLO_PARAMS)
+    setItens(EXEMPLO_ITENS.map((i, k) => ({ ...i, key: `ex${Date.now()}${k}` })))
+    setExemplo(true)
+    showToast('✓ Exemplo carregado — preços FOB ilustrativos; substitua pela invoice real')
+  }
+
   // Modelo em CSV, gerado no próprio navegador
   const baixarModelo = () => {
     const linhas = [
@@ -227,9 +262,21 @@ export default function ImportacaoPage() {
           <h1 className="page-title">Simulador de Importação</h1>
           <p className="page-subtitle">Custo desembarcado, margem, viabilidade e descasamento de caixa — da China ao estoque</p>
         </div>
-        <button className="btn btn-sm" style={{ background: 'var(--brave-light)', border: 'none', color: 'var(--brave-dark)' }}
-          onClick={() => setAjuda(a => !a)}>{ajuda ? '▲ Ocultar explicações' : '▼ Mostrar explicações'}</button>
+        <div className="flex gap-2">
+          <button className="btn btn-sm" style={{ background: 'var(--brave-yellow)', border: 'none', color: 'var(--brave-dark)', fontWeight: 600 }}
+            onClick={carregarExemplo}>▷ Carregar exemplo</button>
+          <button className="btn btn-sm" style={{ background: 'var(--brave-light)', border: 'none', color: 'var(--brave-dark)' }}
+            onClick={() => setAjuda(a => !a)}>{ajuda ? '▲ Ocultar explicações' : '▼ Mostrar explicações'}</button>
+        </div>
       </div>
+
+      {exemplo && (
+        <div className="card mb-6" style={{ padding: '10px 16px', background: '#fffdf3', border: '1px solid var(--brave-yellow)', fontSize: 12.5, color: 'var(--brave-gray-mid)' }}>
+          <strong>Você está vendo um exemplo.</strong> Os produtos, preços de venda e custos nacionais são reais, do catálogo de vocês —
+          mas os <strong>preços FOB e o frete são ilustrativos</strong>, só para mostrar como a tela funciona. Substitua pelos números da
+          sua invoice (ou arraste a proforma abaixo) para uma decisão de verdade. As alíquotas de II e IPI devem ser confirmadas com o despachante.
+        </div>
+      )}
 
       {ajuda && (
         <div className="card mb-6" style={{ background: '#fffdf3', border: '1px solid var(--brave-yellow)' }}>
