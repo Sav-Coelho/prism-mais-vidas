@@ -117,8 +117,8 @@ export interface ItemResult {
   economiaUnit: number       // quanto economiza por unidade vs comprar no Brasil
   economiaPct: number
   precoVenda: number
-  mcUnit: number             // margem de contribuição unitária (já com despesas variáveis)
-  mcPct: number
+  mcUnit: number | null      // margem de contribuição unitária; null = sem preço de venda definido
+  mcPct: number | null
   mcUnitNacional: number | null
   markup: number | null
 }
@@ -141,6 +141,7 @@ export interface ImportResult {
   receitaPotencial: number
   mcTotal: number
   mcPctMedia: number
+  semPrecoVenda: number       // itens sem preço definido — fora do cálculo de margem
   fatorLandedCost: number     // custo desembarcado ÷ FOB — "cada R$ 1 de mercadoria vira R$ X"
   economiaVsNacional: number | null
   roi: number | null          // MC total ÷ investimento
@@ -210,10 +211,13 @@ export function calcImportacao(p: ImportParams, itens: ImportItem[], varRatePct:
 
     // Margem de contribuição: MC = Preço − (Custo + Despesas Variáveis) — mesma
     // definição da aba Produtos, para os números conversarem entre si.
-    const despVarUnit = i.precoVenda * pct(varRatePct)
-    const mcUnit = i.precoVenda - custoUnitario - despVarUnit
+    // Produto novo ainda sem preço definido não tem margem a calcular: fica nulo em
+    // vez de virar "MC negativa", que faria parecer prejuízo onde só falta informação.
+    const temPreco = i.precoVenda > 0
+    const despVarUnit = temPreco ? i.precoVenda * pct(varRatePct) : 0
+    const mcUnit = temPreco ? i.precoVenda - custoUnitario - despVarUnit : null
     const custoNac = i.custoNacionalAtual || 0
-    const mcUnitNacional = custoNac > 0 ? i.precoVenda - custoNac - despVarUnit : null
+    const mcUnitNacional = temPreco && custoNac > 0 ? i.precoVenda - custoNac - despVarUnit : null
 
     return {
       key: i.key, produto: i.produto, sku: i.sku, ncm: i.ncm,
@@ -225,9 +229,9 @@ export function calcImportacao(p: ImportParams, itens: ImportItem[], varRatePct:
       economiaUnit: custoNac > 0 ? custoNac - custoUnitario : 0,
       economiaPct: custoNac > 0 ? (custoNac - custoUnitario) / custoNac : 0,
       precoVenda: i.precoVenda,
-      mcUnit, mcPct: i.precoVenda > 0 ? mcUnit / i.precoVenda : 0,
+      mcUnit, mcPct: mcUnit != null && i.precoVenda > 0 ? mcUnit / i.precoVenda : null,
       mcUnitNacional,
-      markup: custoUnitario > 0 ? i.precoVenda / custoUnitario : null,
+      markup: temPreco && custoUnitario > 0 ? i.precoVenda / custoUnitario : null,
     }
   })
 
@@ -236,8 +240,11 @@ export function calcImportacao(p: ImportParams, itens: ImportItem[], varRatePct:
   const creditos = soma(r => r.creditos)
   const investimentoTotal = valorAduaneiroTotal + tributosTotais + despesasBrasil + iof
   const custoDesembarcado = investimentoTotal - creditos
-  const receitaPotencial = soma(r => r.precoVenda * r.quantidade)
-  const mcTotal = soma(r => r.mcUnit * r.quantidade)
+  // Itens sem preço de venda ficam fora de receita e margem — não dá para projetar o
+  // que ainda não foi precificado. Eles continuam no custo e no caixa, que são certos.
+  const semPrecoVenda = res.filter(r => r.mcUnit == null).length
+  const receitaPotencial = soma(r => (r.mcUnit == null ? 0 : r.precoVenda * r.quantidade))
+  const mcTotal = soma(r => (r.mcUnit == null ? 0 : r.mcUnit * r.quantidade))
   const economiaTotal = soma(r => (r.custoNacionalAtual > 0 ? r.economiaUnit * r.quantidade : 0))
   const temComparacao = res.some(r => r.custoNacionalAtual > 0)
 
@@ -248,7 +255,7 @@ export function calcImportacao(p: ImportParams, itens: ImportItem[], varRatePct:
     cofins: soma(r => r.cofins), icms: soma(r => r.icms), afrmm, iof,
     tributosTotais, creditos, despesasBrasil,
     investimentoTotal, custoDesembarcado,
-    receitaPotencial, mcTotal,
+    receitaPotencial, mcTotal, semPrecoVenda,
     mcPctMedia: receitaPotencial > 0 ? mcTotal / receitaPotencial : 0,
     fatorLandedCost: fobBRL > 0 ? custoDesembarcado / fobBRL : 0,
     economiaVsNacional: temComparacao ? economiaTotal : null,

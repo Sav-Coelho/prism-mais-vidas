@@ -437,8 +437,11 @@ export default function ImportacaoPage() {
             <div className="metric-card">
               <div className="metric-accent" style={{ background: r.mcPctMedia >= 0 ? GOOD : CRITICAL }} />
               <div className="metric-label">Margem de contribuição</div>
-              <div className="metric-value" style={{ fontSize: 19, color: r.mcPctMedia >= 0 ? undefined : CRITICAL }}>{pctStr(r.mcPctMedia)}</div>
-              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>{fmtBRL(r.mcTotal)} no lote</div>
+              <div className="metric-value" style={{ fontSize: 19, color: r.mcPctMedia >= 0 ? undefined : CRITICAL }}>{r.receitaPotencial > 0 ? pctStr(r.mcPctMedia) : '—'}</div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 2 }}>
+                {r.receitaPotencial > 0 ? `${fmtBRL(r.mcTotal)} no lote` : 'defina o preço de venda dos itens'}
+                {r.semPrecoVenda > 0 && r.receitaPotencial > 0 && <> · {r.semPrecoVenda} sem preço</>}
+              </div>
             </div>
             <div className="metric-card">
               <div className="metric-label">Retorno sobre o investido</div>
@@ -504,16 +507,19 @@ export default function ImportacaoPage() {
                   </thead>
                   <tbody>
                     {r.itens.map(it => (
-                      <tr key={it.key} style={{ background: it.mcUnit < 0 ? '#fdf0ee' : undefined }}>
+                      <tr key={it.key} style={{ background: (it.mcUnit ?? 0) < 0 ? '#fdf0ee' : undefined }}>
                         <td>{it.produto || <span style={{ color: 'var(--brave-gray)' }}>(sem nome)</span>}
-                          <div style={{ fontSize: 10, color: 'var(--brave-gray)' }}>{fmtInt(it.quantidade)} un{it.ncm ? ` · NCM ${it.ncm}` : ''}</div>
+                          <div style={{ fontSize: 10, color: 'var(--brave-gray)' }}>
+                            {fmtInt(it.quantidade)} un{it.ncm ? ` · NCM ${it.ncm}` : ''}
+                            {it.mcUnit == null && <span style={{ color: '#d59f07' }}> · falta o preço de venda</span>}
+                          </div>
                         </td>
                         <td style={{ textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{fmtBRL(it.custoUnitario)}</td>
                         <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: it.custoNacionalAtual > 0 ? (it.economiaUnit >= 0 ? GOOD : CRITICAL) : 'var(--brave-gray)' }}>
                           {it.custoNacionalAtual > 0 ? `${it.economiaUnit >= 0 ? '−' : '+'}${Math.abs(it.economiaPct * 100).toFixed(0)}%` : '—'}
                         </td>
-                        <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: it.mcUnit < 0 ? CRITICAL : INK }}>{fmtBRL(it.mcUnit)}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: it.mcPct < 0 ? CRITICAL : INK }}>{pctStr(it.mcPct)}</td>
+                        <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: (it.mcUnit ?? 0) < 0 ? CRITICAL : INK }}>{it.mcUnit == null ? '—' : fmtBRL(it.mcUnit)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: (it.mcPct ?? 0) < 0 ? CRITICAL : INK }}>{it.mcPct == null ? '—' : pctStr(it.mcPct)}</td>
                         <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--brave-gray)' }}>{it.markup == null ? '—' : `${it.markup.toFixed(2)}×`}</td>
                       </tr>
                     ))}
@@ -522,6 +528,10 @@ export default function ImportacaoPage() {
               </div>
               <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 8, lineHeight: 1.5 }}>
                 “vs nacional” negativo = importar sai <strong>mais barato</strong>. MC já desconta {varRatePct.toFixed(2)}% de despesas variáveis sobre a venda.
+                {r.semPrecoVenda > 0 && (
+                  <> <strong style={{ color: '#d59f07' }}>{r.semPrecoVenda} {r.semPrecoVenda === 1 ? 'item está' : 'itens estão'} sem preço de venda</strong> — o custo desembarcado
+                  deles já está calculado, mas ficam de fora da margem e da receita até você definir o preço. É o caso normal de produto novo.</>
+                )}
               </div>
             </div>
           </div>
