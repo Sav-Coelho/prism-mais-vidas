@@ -295,7 +295,7 @@ export default function ImportacaoPage() {
             <p style={{ marginBottom: 6 }}>
               <strong>3. O regime tributário muda tudo.</strong> No <strong>Simples Nacional</strong> — o caso de vocês — nenhum imposto
               da importação é recuperável: tudo vira custo do produto. No Lucro Real, PIS, COFINS e ICMS voltam como crédito.
-              A mesma importação pode custar ~25% mais no Simples. Troque o regime abaixo e veja a diferença.
+              A mesma importação sai <strong>cerca de 33% mais cara</strong> no Simples. Troque o regime abaixo e veja a diferença.
             </p>
             <p style={{ margin: 0 }}>
               <strong>4. O risco não é o custo, é o tempo.</strong> Você paga o fornecedor hoje, os impostos uns 90 dias depois, e só
@@ -501,7 +501,7 @@ export default function ImportacaoPage() {
             </div>
           </div>
 
-          <div className="grid-2 mb-6" style={{ gap: 20, alignItems: 'start' }}>
+          <div className="mb-6" style={{ display: 'grid', gridTemplateColumns: 'minmax(330px, 420px) 1fr', gap: 20, alignItems: 'start' }}>
             <div className="card">
               <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 2 }}>3. Como o preço vira custo</div>
               <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 10 }}>
@@ -544,7 +544,7 @@ export default function ImportacaoPage() {
                 <table style={{ fontSize: 12 }}>
                   <thead>
                     <tr>
-                      <th>Produto</th>
+                      <th style={{ minWidth: 230 }}>Produto</th>
                       <th style={{ textAlign: 'right' }}>Custo un.</th>
                       <th style={{ textAlign: 'right' }}>vs nacional</th>
                       <th style={{ textAlign: 'right' }}>MC/un</th>
