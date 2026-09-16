@@ -76,6 +76,9 @@ export default function ImportacaoPage() {
   const [dre, setDre] = useState<any>(null)
   const [toast, setToast] = useState('')
   const [ajuda, setAjuda] = useState(true)
+  const [importando, setImportando] = useState(false)
+  const [dragPlanilha, setDragPlanilha] = useState(false)
+  const planilhaRef = useRef<HTMLInputElement>(null)
   const carregado = useRef(false)
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
@@ -119,6 +122,74 @@ export default function ImportacaoPage() {
   const setI = (key: string, campo: keyof ImportItem, v: any) =>
     setItens(list => list.map(i => (i.key === key ? { ...i, [campo]: v } : i)))
   const num = (v: string) => { const n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? 0 : n }
+
+  // ── Importar a proforma invoice / lista de itens ──────────────────────────
+  // Substitui a lista inteira: a planilha é a fonte da verdade do pedido. O que a
+  // planilha não traz (preço de venda, custo nacional, alíquotas) é completado com
+  // o catálogo de vocês, casando por SKU e, na falta dele, pelo nome do produto.
+  const importarPlanilha = async (file: File) => {
+    setImportando(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/importacao/parse', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) { showToast(`Erro: ${data.error}`); setImportando(false); return }
+
+      const porSku = new Map<string, any>()
+      const porNome = new Map<string, any>()
+      catalogo.forEach((c: any) => {
+        if (c.sku) porSku.set(String(c.sku).trim().toLowerCase(), c)
+        if (c.product) porNome.set(String(c.product).trim().toLowerCase(), c)
+      })
+
+      let casados = 0
+      const novos: ImportItem[] = (data.itens as any[]).map((it, k) => {
+        const cat = (it.sku && porSku.get(String(it.sku).trim().toLowerCase()))
+          || porNome.get(String(it.produto).trim().toLowerCase())
+        if (cat && (!it.precoVenda || !it.custoNacionalAtual)) casados++
+        return {
+          key: `p${Date.now()}${k}`,
+          produto: it.produto,
+          sku: it.sku ?? (cat ? cat.sku : null),
+          ncm: it.ncm || '',
+          quantidade: it.quantidade,
+          precoFobUnit: it.precoFobUnit,
+          pesoUnitKg: it.pesoUnitKg || 0,
+          iiAliqPct: it.iiAliqPct ?? 18,
+          ipiAliqPct: it.ipiAliqPct ?? 0,
+          precoVenda: it.precoVenda || (cat?.salePrice ?? 0),
+          custoNacionalAtual: it.custoNacionalAtual || (cat?.replacementCost ?? 0),
+        }
+      })
+
+      setItens(novos)
+      const semNcm = novos.filter(i => !i.ncm).length
+      const partes = [`✓ ${novos.length} ${novos.length === 1 ? 'item importado' : 'itens importados'}`]
+      if (casados > 0) partes.push(`${casados} completados pelo catálogo`)
+      if (semNcm > 0) partes.push(`${semNcm} sem NCM — confira as alíquotas`)
+      if (data.avisos?.length) partes.push(`${data.avisos.length} ${data.avisos.length === 1 ? 'linha ignorada' : 'linhas ignoradas'}`)
+      showToast(partes.join(' · '))
+    } catch {
+      showToast('Erro ao ler a planilha')
+    }
+    setImportando(false)
+  }
+
+  // Modelo em CSV, gerado no próprio navegador
+  const baixarModelo = () => {
+    const linhas = [
+      'Produto;SKU;NCM;Quantidade;Preço Unitário FOB;Peso Unitário;II %;IPI %;Preço de Venda;Custo Nacional',
+      'Lanterna de Cabeça Led V3 Ceramic;3748;8513.10.10;1500;7,20;0,18;18;0;204,50;85,50',
+      'Farol Bike Lente Amarela 50w;4943;8512.10.00;600;12,80;0,32;18;0;249,50;76,50',
+    ].join('\r\n')
+    const blob = new Blob(['﻿' + linhas], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'modelo-itens-importacao.csv'
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
 
   const addDoCatalogo = (sku: string) => {
     const p = catalogo.find((c: any) => String(c.sku) === sku)
@@ -249,6 +320,32 @@ export default function ImportacaoPage() {
             </div>
           </Bloco>
         </div>
+      </div>
+
+      {/* ── Importar a lista de itens ─────────────────────────────────── */}
+      <div
+        className={`upload-zone mb-6 ${dragPlanilha ? 'drag' : ''}`}
+        onDragOver={e => { e.preventDefault(); setDragPlanilha(true) }}
+        onDragLeave={() => setDragPlanilha(false)}
+        onDrop={e => { e.preventDefault(); setDragPlanilha(false); const f = e.dataTransfer.files?.[0]; if (f) importarPlanilha(f) }}
+        onClick={() => planilhaRef.current?.click()}
+      >
+        <input ref={planilhaRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
+          onChange={e => { const f = e.target.files?.[0]; if (f) importarPlanilha(f); e.target.value = '' }} />
+        <div className="upload-icon">{importando ? '⏳' : '📄'}</div>
+        <div className="upload-title">
+          {importando ? 'Lendo a planilha…' : 'Importar a lista de itens — proforma invoice do fornecedor'}
+        </div>
+        <div className="upload-sub">
+          Aceita <strong>.xlsx</strong> e <strong>.csv</strong>, em português ou inglês. Reconhece
+          <strong> Produto/Description · SKU/Item No · NCM/HS Code · Qtd/Qty · Preço Unitário/Unit Price · Peso/Weight</strong>
+          {' '}— e, se houver, II%, IPI%, preço de venda e custo nacional.
+          <br />Linhas de título e de total são ignoradas; sem preço unitário, ele é deduzido do valor total ÷ quantidade.
+          <strong> Preço de venda e custo nacional que faltarem são completados pelo catálogo de vocês.</strong>
+          <br /><span style={{ color: 'var(--brave-gray)' }}>Atenção: a planilha substitui a lista atual de itens.</span>
+        </div>
+        <button className="btn btn-sm btn-secondary" style={{ marginTop: 10 }}
+          onClick={e => { e.stopPropagation(); baixarModelo() }}>⤓ Baixar modelo de planilha</button>
       </div>
 
       {/* ── Produtos ──────────────────────────────────────────────────── */}
