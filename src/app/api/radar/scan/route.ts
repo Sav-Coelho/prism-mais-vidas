@@ -52,12 +52,12 @@ export async function POST(req: NextRequest) {
     if (!body.scanId) {
       await prisma.radarScan.create({
         data: { status: 'sem_credencial', origem: body.origem ?? 'manual', finishedAt: new Date(),
-          erro: 'Configure ML_CLIENT_ID, ML_CLIENT_SECRET e ML_REFRESH_TOKEN nas variáveis de ambiente da Vercel.' },
+          erro: 'Configure ML_CLIENT_ID e ML_CLIENT_SECRET nas variáveis de ambiente da Vercel.' },
       }).catch(() => {})
     }
     return NextResponse.json({
       erro: 'sem_credencial',
-      mensagem: 'O radar precisa de um aplicativo do Mercado Livre. Cadastre em developers.mercadolivre.com.br e informe ML_CLIENT_ID, ML_CLIENT_SECRET e ML_REFRESH_TOKEN na Vercel.',
+      mensagem: 'O radar precisa de um aplicativo do Mercado Livre. Crie em developers.mercadolivre.com.br e informe ML_CLIENT_ID e ML_CLIENT_SECRET na Vercel.',
     }, { status: 428 })
   }
 
@@ -77,6 +77,19 @@ export async function POST(req: NextRequest) {
   // Setting (gravado na renovação anterior); a env var é só a semente inicial.
   const guardado = await prisma.setting.findUnique({ where: { key: 'ml_refresh_token' } }).catch(() => null)
   const refreshEmUso = guardado?.value || cfg.refreshToken
+  if (!refreshEmUso) {
+    // App cadastrado, mas ainda não autorizado: falta o clique de uma vez só.
+    if (!body.scanId) {
+      await prisma.radarScan.create({
+        data: { status: 'sem_credencial', origem: body.origem ?? 'manual', finishedAt: new Date(),
+          erro: 'Aplicativo ainda não autorizado. Abra /api/radar/oauth/start uma única vez.' },
+      }).catch(() => {})
+    }
+    return NextResponse.json({
+      erro: 'sem_autorizacao',
+      mensagem: 'O aplicativo está cadastrado mas ainda não foi autorizado. Abra /api/radar/oauth/start uma única vez para conectar.',
+    }, { status: 428 })
+  }
 
   let accessToken: string
   try {

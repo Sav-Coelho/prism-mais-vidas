@@ -20,22 +20,21 @@
 
 const API = 'https://api.mercadolibre.com'
 
-export interface MLConfig { clientId: string; clientSecret: string; refreshToken: string; sellerNicks: string[] }
+export interface MLConfig { clientId: string; clientSecret: string; refreshToken: string | null; sellerNicks: string[] }
 
-export class SemCredencialML extends Error {
-  constructor() {
-    super('Credenciais do Mercado Livre não configuradas (ML_CLIENT_ID, ML_CLIENT_SECRET, ML_REFRESH_TOKEN).')
-    this.name = 'SemCredencialML'
-  }
-}
-
+/**
+ * Só o App ID e o Secret vêm de variável de ambiente. O refresh_token é obtido na
+ * autorização (/api/radar/oauth/start) e guardado no banco, porque é de uso único
+ * e muda a cada renovação — não caberia numa env var. `ML_REFRESH_TOKEN` segue
+ * aceita como semente, para quem já tiver um token em mãos.
+ */
 export function lerConfig(): MLConfig | null {
   const clientId = process.env.ML_CLIENT_ID
   const clientSecret = process.env.ML_CLIENT_SECRET
-  const refreshToken = process.env.ML_REFRESH_TOKEN
-  if (!clientId || !clientSecret || !refreshToken) return null
+  if (!clientId || !clientSecret) return null
   return {
-    clientId, clientSecret, refreshToken,
+    clientId, clientSecret,
+    refreshToken: process.env.ML_REFRESH_TOKEN || null,
     sellerNicks: String(process.env.ML_SELLER_NICKS || 'tiochicoshop')
       .split(',').map(s => s.trim()).filter(Boolean),
   }
@@ -46,7 +45,7 @@ export function lerConfig(): MLConfig | null {
  * refresh_token NOVO a cada troca e invalida o anterior — por isso o valor novo
  * é devolvido junto, para ser gravado e usado na semana seguinte.
  */
-export async function obterAccessToken(cfg: MLConfig): Promise<{ accessToken: string; novoRefreshToken: string | null }> {
+export async function obterAccessToken(cfg: MLConfig & { refreshToken: string }): Promise<{ accessToken: string; novoRefreshToken: string | null }> {
   const res = await fetch(`${API}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', accept: 'application/json' },

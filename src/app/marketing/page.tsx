@@ -218,16 +218,22 @@ export default function RadarPrecosPage() {
           ) : (
             <div style={{ fontSize: 12.5, color: 'var(--brave-gray-mid)', lineHeight: 1.65 }}>
               <p style={{ marginBottom: 8 }}>
-                Desde 2026 o Mercado Livre <strong>encerrou o acesso anônimo à API</strong> — mesmo uma busca simples responde 403.
-                Para consultar preços é preciso um aplicativo próprio, que é <strong>gratuito</strong> e leva poucos minutos:
+                Desde 2026 o Mercado Livre <strong>encerrou o acesso anônimo</strong> — a API responde 403 e a busca pelo site exige login.
+                É preciso um aplicativo próprio, que é <strong>gratuito</strong>. Serve <strong>qualquer conta</strong> do Mercado Livre:
+                usar uma conta sua, e não a de vendedor da loja, mantém a conta principal do cliente fora da operação.
               </p>
               <ol style={{ margin: '0 0 8px', paddingLeft: 18 }}>
-                <li>Entrar em <strong>developers.mercadolivre.com.br</strong> com a conta de vendedor da Tio Chico e criar uma aplicação.</li>
-                <li>Anotar o <strong>App ID</strong> e o <strong>Secret Key</strong>, e autorizar a aplicação uma única vez para obter o <strong>refresh token</strong>.</li>
-                <li>Na Vercel, em <em>Settings → Environment Variables</em>, cadastrar <code>ML_CLIENT_ID</code>, <code>ML_CLIENT_SECRET</code>, <code>ML_REFRESH_TOKEN</code> e <code>ML_SELLER_NICKS</code> (o apelido da loja no Mercado Livre).</li>
+                <li>Em <strong>developers.mercadolivre.com.br</strong>, criar uma aplicação. Na <em>URL de redirecionamento</em>, informar:
+                  <div style={{ background: 'var(--brave-dark)', color: 'var(--brave-yellow)', padding: '6px 10px', borderRadius: 6, margin: '5px 0', fontSize: 11.5, fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all' }}>
+                    https://tio-chico-shop.vercel.app/api/radar/oauth/callback
+                  </div>
+                </li>
+                <li>Na Vercel, em <em>Settings → Environment Variables</em>, cadastrar <code>ML_CLIENT_ID</code> (App ID),
+                  <code>ML_CLIENT_SECRET</code> (Secret Key) e <code>ML_SELLER_NICKS</code> (apelido da loja no Mercado Livre, para excluir os anúncios dela).</li>
+                <li>Abrir <a href="/api/radar/oauth/start" style={{ color: '#2b3272', fontWeight: 600 }}>/api/radar/oauth/start</a> uma única vez e autorizar. Pronto.</li>
               </ol>
               <p style={{ margin: 0 }}>
-                O token de acesso dura 6 horas e é renovado sozinho a cada varredura — o cadastro é feito uma vez só.
+                O token de acesso dura 6 horas e é renovado sozinho a cada varredura; o de renovação é guardado no banco automaticamente.
                 <strong> As credenciais devem ser digitadas direto no painel da Vercel</strong>, nunca compartilhadas por mensagem.
               </p>
             </div>
