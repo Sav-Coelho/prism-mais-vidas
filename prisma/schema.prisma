@@ -249,3 +249,54 @@ model FixedExpense {
 
   @@index([month, year])
 }
+
+// Chave/valor para o que precisa sobreviver entre execuções sem virar env var.
+// O refresh_token do Mercado Livre é de uso único: cada renovação devolve um novo
+// e invalida o anterior, então ele precisa ser gravado, não pode ficar só no .env.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// Uma varredura do radar de preços (semanal ou manual).
+model RadarScan {
+  id             Int          @id @default(autoincrement())
+  startedAt      DateTime     @default(now())
+  finishedAt     DateTime?
+  status         String       @default("rodando") // rodando | concluido | erro | sem_credencial
+  origem         String       @default("manual")  // manual | semanal
+  produtos       Int          @default(0)         // produtos consultados
+  semConcorrente Int          @default(0)         // consultados sem nenhum concorrente válido
+  ofertas        Int          @default(0)
+  criticos       Int          @default(0)
+  erro           String?
+  offers         RadarOffer[]
+
+  @@index([startedAt])
+}
+
+// Uma oferta de concorrente encontrada para um produto nosso.
+model RadarOffer {
+  id          Int       @id @default(autoincrement())
+  scanId      Int
+  scan        RadarScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  sku         String?
+  produto     String
+  nossoPreco  Float
+  mlItemId    String
+  titulo      String
+  preco       Float
+  vendedor    String
+  vendedorId  String?
+  permalink   String
+  freteGratis Boolean   @default(false)
+  vendidos    Int       @default(0)
+  semelhanca  Float     @default(0)
+  divergencia Float                       // positivo = concorrente mais barato
+  severidade  String                      // critico | atencao | alinhado | acima
+  createdAt   DateTime  @default(now())
+
+  @@index([scanId])
+  @@index([severidade])
+}

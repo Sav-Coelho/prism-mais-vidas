@@ -8,7 +8,7 @@ const NAV = [
   { href: '/compras', icon: '🛒', label: 'Compras' },
   { href: '/produtos', icon: '📈', label: 'Produtos · ABC & Margem' },
   { href: '/importacao', icon: '🚢', label: 'Simulador de Importação' },
-  { href: '/marketing', icon: '📣', label: 'Marketing' },
+  { href: '/marketing', icon: '📡', label: 'Radar de Preços' },
   { href: '/plano-de-contas', icon: '≡', label: 'Plano de Contas' },
   { href: '/lancamentos', icon: '↑↓', label: 'Lançamentos / OFX' },
   { href: '/saldo', icon: '◉', label: 'Saldo Bancário' },
