@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { NextRequest, NextResponse } from 'next/server'
-import { pagina } from '../start/route'
+import { pagina } from '@/lib/pagina-html'
 
 export const runtime = 'nodejs'
 
