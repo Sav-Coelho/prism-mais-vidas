@@ -27,7 +27,20 @@
 import { tokenize, jaccardSimilarity } from './classifier'
 
 export const LIMIAR_CRITICO_PADRAO = 0.20   // 20% abaixo do nosso preço
-export const LIMIAR_SEMELHANCA_PADRAO = 0.34
+
+/**
+ * Limiar de semelhança, calibrado contra o catálogo real (out/2026).
+ *
+ * Começou em 0,34 e subiu para 0,50 depois da primeira varredura de verdade: na
+ * faixa de 0,36 a 0,42 entravam comparações erradas e caras — o farol de R$ 234,85
+ * aparecia "76% acima" de um SUPORTE de alumínio de R$ 57,30, e quatro dos nove
+ * concorrentes críticos eram esse mesmo engano. De 0,50 para cima as comparações
+ * se sustentaram (a melhor: semelhança 1,00, mesmo produto, 31% abaixo).
+ *
+ * Subir o limiar custa cobertura e paga em confiança: um alerta falso de preço faz
+ * a loja baixar margem sem motivo, que é pior do que não alertar.
+ */
+export const LIMIAR_SEMELHANCA_PADRAO = 0.50
 
 /** Palavras que não ajudam a achar o produto e só poluem a busca. */
 const RUIDO = new Set([
