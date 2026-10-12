@@ -24,7 +24,7 @@
  * comparar com outro produto.
  */
 
-import { tokenize, jaccardSimilarity } from './classifier'
+import { jaccardSimilarity } from './classifier'
 
 export const LIMIAR_CRITICO_PADRAO = 0.20   // 20% abaixo do nosso preço
 
@@ -41,6 +41,14 @@ export const LIMIAR_CRITICO_PADRAO = 0.20   // 20% abaixo do nosso preço
  * a loja baixar margem sem motivo, que é pior do que não alertar.
  */
 export const LIMIAR_SEMELHANCA_PADRAO = 0.50
+
+/**
+ * Guarda contra a comparação implausível: um desconto desta ordem só é levado a
+ * sério se o nome bater quase por inteiro. Abaixo disso, é outro modelo da mesma
+ * família — não um concorrente nos cortando.
+ */
+export const CORTE_IMPLAUSIVEL = 0.55
+export const SEMELHANCA_PARA_CORTE_GRANDE = 0.80
 
 /** Palavras que não ajudam a achar o produto e só poluem a busca. */
 const RUIDO = new Set([
@@ -65,9 +73,29 @@ export function montarConsulta(titulo: string, maxTermos = 6): string {
   return unicos.slice(0, maxTermos).join(' ')
 }
 
+/**
+ * Tokens de NOME DE PRODUTO — com os números.
+ *
+ * O `tokenize` do classificador de lançamentos joga os dígitos fora, e com razão:
+ * num extrato bancário, número é ruído. Em nome de produto é o oposto — o número é
+ * justamente o modelo. Sem ele, "Carregador Duplo Bateria 26650" e "Carregador
+ * Duplo Bateria 18650" viram o mesmo texto, e o radar acusava 52% de corte onde só
+ * havia uma bateria diferente. O mesmo valia para 1200 × 1500 lúmens.
+ */
+function tokensProduto(texto: string): Set<string> {
+  return new Set(
+    String(texto || '')
+      .toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter(t => t.length > 1 && !RUIDO.has(t))
+  )
+}
+
 /** Semelhança entre o nosso título e o do anúncio (0 a 1). */
 export function semelhanca(nosso: string, anuncio: string): number {
-  return jaccardSimilarity(tokenize(nosso), tokenize(anuncio))
+  return jaccardSimilarity(tokensProduto(nosso), tokensProduto(anuncio))
 }
 
 /**
@@ -144,6 +172,11 @@ export function avaliarOfertas(
       return { ...o, semelhanca: sem, divergencia, severidade: classificarSeveridade(divergencia, limiar) }
     })
     .filter(o => o.semelhanca >= minSem)
+    // Corte enorme com nome só parecido é quase sempre OUTRO MODELO da mesma
+    // família — a lanterna com seta de R$ 145 contra a de R$ 39,99 — e não alguém
+    // nos cortando. Mesmo critério do limiar de semelhança: melhor não comparar do
+    // que comparar errado, porque alarme falso faz a loja baixar margem à toa.
+    .filter(o => !(o.divergencia >= CORTE_IMPLAUSIVEL && o.semelhanca < SEMELHANCA_PARA_CORTE_GRANDE))
     .sort((a, b) => b.divergencia - a.divergencia)   // mais barato primeiro = mais ameaçador
 }
 
