@@ -28,6 +28,8 @@
  * Por isso o radar trabalha pelo catálogo, não pela busca.
  */
 
+import { semelhanca, LIMIAR_SEMELHANCA_PADRAO } from './radar'
+
 const API = 'https://api.mercadolibre.com'
 
 /**
@@ -196,17 +198,37 @@ export async function apelidoVendedor(accessToken: string, vendedorId: string, c
 export async function buscarOfertas(
   accessToken: string,
   consulta: string,
-  limite = 20,
-  cacheVendedores?: Map<string, string>,
+  opts: {
+    nossoTitulo: string
+    limite?: number
+    maxFichas?: number
+    limiarSemelhanca?: number
+    cacheVendedores?: Map<string, string>
+  },
 ): Promise<MLItem[]> {
-  const produtos = await buscarProdutosCatalogo(accessToken, consulta, 3)
-  const cache = cacheVendedores ?? new Map<string, string>()
+  const limite = opts.limite ?? 25
+  const minSemelhanca = opts.limiarSemelhanca ?? LIMIAR_SEMELHANCA_PADRAO
+  const cache = opts.cacheVendedores ?? new Map<string, string>()
+
+  // Varrer VÁRIAS fichas é o que faz o radar enxergar. A maioria responde
+  // "No winners found" — a ficha existe, mas ninguém disputa aquele produto no
+  // catálogo. Medido sobre os 10 produtos de maior giro: olhar 3 fichas achou
+  // concorrente em 1; olhar 10 achou em 6.
+  const fichas = await buscarProdutosCatalogo(accessToken, consulta, opts.maxFichas ?? 8)
+
+  // Descarta a ficha errada ANTES de gastar chamada com ela: a busca de catálogo
+  // devolve vizinhos ("suporte de GPS" para um farol), e comparar preço com outro
+  // produto é pior do que não comparar.
+  const parecidas = fichas
+    .map(f => ({ ficha: f, sem: semelhanca(opts.nossoTitulo, f.nome) }))
+    .filter(f => f.sem >= minSemelhanca)
+    .sort((a, b) => b.sem - a.sem)
 
   const ofertas: MLItem[] = []
   const vistos = new Set<string>()
-  for (const p of produtos) {
+  for (const { ficha } of parecidas) {
     if (ofertas.length >= limite) break
-    const doProduto = await ofertasDoProduto(accessToken, p)
+    const doProduto = await ofertasDoProduto(accessToken, ficha)
     for (const o of doProduto) {
       if (vistos.has(o.mlItemId)) continue
       vistos.add(o.mlItemId)

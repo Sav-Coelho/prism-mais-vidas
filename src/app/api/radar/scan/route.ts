@@ -122,7 +122,10 @@ export async function POST(req: NextRequest) {
     const p = produtos[i]
     try {
       const consulta = montarConsulta(p.produto)
-      const brutas = await buscarOfertas(accessToken, consulta, 25, cacheVendedores)
+      const brutas = await buscarOfertas(accessToken, consulta, {
+        nossoTitulo: p.produto, limite: 25,
+        limiarSemelhanca: LIMIAR_SEMELHANCA_PADRAO, cacheVendedores,
+      })
       const avaliadas = avaliarOfertas(p.preco, p.produto, brutas, {
         limiarCritico, limiarSemelhanca: LIMIAR_SEMELHANCA_PADRAO, apelidosProprios: cfg.sellerNicks,
       })
