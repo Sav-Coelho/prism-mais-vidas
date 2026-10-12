@@ -119,6 +119,56 @@ export async function GET(req: NextRequest) {
     if (i < alvos.length - 1) await pausa(150)
   }
 
+  // Cadeia do catálogo: é ela que substitui a busca pública. Procura o produto no
+  // catálogo, abre a ficha e lista as ofertas — se as três etapas responderem, o
+  // radar tem de onde tirar preço de concorrente sem depender de /sites/search.
+  let cadeia: any = null
+  if (searchParams.get('cadeia') === '1') {
+    cadeia = { consulta: q, etapas: [] as any[] }
+    try {
+      const r = await fetch(`${API}/products/search?site_id=MLB&q=${encodeURIComponent(q)}&limit=3`,
+        { headers: { Authorization: `Bearer ${accessToken}`, accept: 'application/json' } })
+      const j = await r.json().catch(() => null)
+      const achados = Array.isArray(j?.results) ? j.results : []
+      cadeia.etapas.push({
+        etapa: '1. buscar no catálogo', status: r.status, quantos: achados.length,
+        amostra: achados.slice(0, 3).map((p: any) => ({ id: p.id, nome: p.name, status: p.status })),
+      })
+      const produtoId = achados[0]?.id
+      if (produtoId) {
+        const r2 = await fetch(`${API}/products/${produtoId}`,
+          { headers: { Authorization: `Bearer ${accessToken}`, accept: 'application/json' } })
+        const p2 = await r2.json().catch(() => null)
+        cadeia.etapas.push({
+          etapa: '2. ficha do produto', status: r2.status, produtoId,
+          nome: p2?.name, campos: p2 ? Object.keys(p2).slice(0, 20) : null,
+          // buy_box_winner é o anúncio que está ganhando a página do produto:
+          // vendedor e preço do concorrente, que é exatamente o que o radar quer.
+          vencedor: p2?.buy_box_winner ? {
+            itemId: p2.buy_box_winner.item_id, preco: p2.buy_box_winner.price,
+            vendedorId: p2.buy_box_winner.seller_id, moeda: p2.buy_box_winner.currency_id,
+          } : null,
+        })
+        await pausa(150)
+        const r3 = await fetch(`${API}/products/${produtoId}/items`,
+          { headers: { Authorization: `Bearer ${accessToken}`, accept: 'application/json' } })
+        const t3 = await r3.text().catch(() => '')
+        let ofertas: any = t3.slice(0, 300)
+        try {
+          const j3 = JSON.parse(t3)
+          const lista = Array.isArray(j3?.results) ? j3.results : Array.isArray(j3) ? j3 : []
+          if (lista.length) ofertas = lista.slice(0, 5).map((o: any) => ({
+            itemId: o.item_id || o.id, preco: o.price, vendedorId: o.seller_id,
+            frete: o.shipping?.free_shipping ?? null, vendidos: o.sold_quantity ?? null,
+          }))
+        } catch { /* corpo não-JSON fica como texto */ }
+        cadeia.etapas.push({ etapa: '3. ofertas do produto (concorrentes)', status: r3.status, ofertas })
+      }
+    } catch (e: any) {
+      cadeia.erro = String(e?.message || e).slice(0, 200)
+    }
+  }
+
   const abertos = sondas.filter(s => s.status >= 200 && s.status < 300).map(s => s.url)
   const fechados = sondas.filter(s => s.status === 401 || s.status === 403).map(s => `${s.url} → ${s.status}`)
 
@@ -128,5 +178,6 @@ export async function GET(req: NextRequest) {
     temRefreshToken: Boolean(refreshEmUso),
     sondas,
     resumo: { abertos, fechados },
+    ...(cadeia ? { cadeia } : {}),
   })
 }
