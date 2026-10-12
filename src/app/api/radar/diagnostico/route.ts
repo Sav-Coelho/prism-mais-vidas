@@ -124,9 +124,14 @@ export async function GET(req: NextRequest) {
   // radar tem de onde tirar preço de concorrente sem depender de /sites/search.
   let cadeia: any = null
   if (searchParams.get('cadeia') === '1') {
-    cadeia = { consulta: q, etapas: [] as any[] }
+    // Sem `status=active` o catálogo devolve fichas desativadas, que não têm
+    // vencedor nem ofertas — e a cadeia morre na terceira etapa por falta de dado,
+    // não por falta de permissão.
+    const statusBusca = searchParams.get('status') ?? 'active'
+    cadeia = { consulta: q, status: statusBusca, etapas: [] as any[] }
     try {
-      const r = await fetch(`${API}/products/search?site_id=MLB&q=${encodeURIComponent(q)}&limit=3`,
+      const filtro = statusBusca === 'todos' ? '' : `&status=${encodeURIComponent(statusBusca)}`
+      const r = await fetch(`${API}/products/search?site_id=MLB&q=${encodeURIComponent(q)}${filtro}&limit=3`,
         { headers: { Authorization: `Bearer ${accessToken}`, accept: 'application/json' } })
       const j = await r.json().catch(() => null)
       const achados = Array.isArray(j?.results) ? j.results : []
@@ -134,8 +139,12 @@ export async function GET(req: NextRequest) {
         etapa: '1. buscar no catálogo', status: r.status, quantos: achados.length,
         amostra: achados.slice(0, 3).map((p: any) => ({ id: p.id, nome: p.name, status: p.status })),
       })
-      const produtoId = achados[0]?.id
-      if (produtoId) {
+      // Percorre os candidatos até achar um com oferta de verdade: uma ficha sem
+      // vencedor não prova que o caminho está fechado, só que aquele produto está
+      // parado. Parar no primeiro daria um falso negativo.
+      for (const candidato of achados.slice(0, 3)) {
+        const produtoId = candidato?.id
+        if (!produtoId) continue
         const r2 = await fetch(`${API}/products/${produtoId}`,
           { headers: { Authorization: `Bearer ${accessToken}`, accept: 'application/json' } })
         const p2 = await r2.json().catch(() => null)
@@ -163,6 +172,8 @@ export async function GET(req: NextRequest) {
           }))
         } catch { /* corpo não-JSON fica como texto */ }
         cadeia.etapas.push({ etapa: '3. ofertas do produto (concorrentes)', status: r3.status, ofertas })
+        if (r3.ok && Array.isArray(ofertas) && ofertas.length) break
+        await pausa(150)
       }
     } catch (e: any) {
       cadeia.erro = String(e?.message || e).slice(0, 200)
