@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { pagina } from '@/lib/pagina-html'
+import { urlBase } from '@/lib/mercadolivre'
 
 export const runtime = 'nodejs'
 
@@ -10,8 +11,7 @@ export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
   const clientId = process.env.ML_CLIENT_ID
-  const origem = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : new URL(req.url).origin
-  const redirectUri = `${origem}/api/radar/oauth/callback`
+  const redirectUri = `${urlBase(req)}/api/radar/oauth/callback`
 
   if (!clientId) {
     return new NextResponse(pagina(

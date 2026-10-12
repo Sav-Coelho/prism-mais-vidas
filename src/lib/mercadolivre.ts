@@ -20,6 +20,28 @@
 
 const API = 'https://api.mercadolibre.com'
 
+/**
+ * URL base ESTÁVEL da aplicação, para montar a URL de redirecionamento do OAuth.
+ *
+ * Não usar `VERCEL_URL`: ela aponta para o deploy específico
+ * (tio-chico-shop-1ojp6niiu-....vercel.app) e muda a cada publicação — a URL
+ * cadastrada no Mercado Livre deixaria de bater no dia seguinte, e o ML exige que
+ * ela seja idêntica na autorização e na troca do código.
+ *
+ * A ordem usa primeiro o domínio que o navegador realmente acessou, porque é o
+ * que a pessoa vê na barra de endereços e vai cadastrar no Mercado Livre.
+ */
+export function urlBase(req: Request): string {
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host')
+  if (host && !/^localhost|127\.0\.0\.1/.test(host)) {
+    const proto = req.headers.get('x-forwarded-proto') || 'https'
+    return `${proto}://${host}`
+  }
+  const producao = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  if (producao) return `https://${producao}`
+  return new URL(req.url).origin
+}
+
 export interface MLConfig { clientId: string; clientSecret: string; refreshToken: string | null; sellerNicks: string[] }
 
 /**

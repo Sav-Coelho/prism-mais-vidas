@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { NextRequest, NextResponse } from 'next/server'
 import { pagina } from '@/lib/pagina-html'
+import { urlBase } from '@/lib/mercadolivre'
 
 export const runtime = 'nodejs'
 
@@ -37,8 +38,7 @@ export async function GET(req: NextRequest) {
       <p class="erro">Cadastre <code>ML_CLIENT_ID</code> e <code>ML_CLIENT_SECRET</code> na Vercel antes de autorizar.</p>`), 428)
   }
 
-  const origem = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : new URL(req.url).origin
-  const redirectUri = `${origem}/api/radar/oauth/callback`
+  const redirectUri = `${urlBase(req)}/api/radar/oauth/callback`
 
   try {
     const res = await fetch('https://api.mercadolibre.com/oauth/token', {
