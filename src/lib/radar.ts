@@ -82,15 +82,14 @@ export function montarConsulta(titulo: string, maxTermos = 6): string {
  * Duplo Bateria 18650" viram o mesmo texto, e o radar acusava 52% de corte onde só
  * havia uma bateria diferente. O mesmo valia para 1200 × 1500 lúmens.
  */
-function tokensProduto(texto: string): Set<string> {
-  return new Set(
-    String(texto || '')
-      .toLowerCase()
-      .normalize('NFD').replace(/[̀-ͯ]/g, '')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .split(/\s+/)
-      .filter(t => t.length > 1 && !RUIDO.has(t))
-  )
+function tokensProduto(texto: string): string[] {
+  const limpos = String(texto || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length > 1 && !RUIDO.has(t))
+  return Array.from(new Set(limpos))
 }
 
 /** Semelhança entre o nosso título e o do anúncio (0 a 1). */

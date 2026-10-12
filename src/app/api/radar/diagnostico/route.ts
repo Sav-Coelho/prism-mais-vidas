@@ -254,6 +254,10 @@ export async function GET(req: NextRequest) {
   const fechados = sondas.filter(s => s.status === 401 || s.status === 403).map(s => `${s.url} → ${s.status}`)
 
   return NextResponse.json({
+    // Qual código está realmente no ar. Build quebrado na Vercel mantém a versão
+    // anterior servindo em silêncio, e sem este marcador a gente testa a mudança
+    // nova contra o código velho e conclui errado — já aconteceu duas vezes.
+    commit: (process.env.VERCEL_GIT_COMMIT_SHA || 'local').slice(0, 7),
     origemToken,
     tokenExpiraEm: expiraEm ? new Date(expiraEm).toISOString() : null,
     temRefreshToken: Boolean(refreshEmUso),
