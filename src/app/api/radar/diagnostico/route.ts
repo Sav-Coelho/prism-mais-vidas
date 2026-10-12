@@ -195,26 +195,39 @@ export async function GET(req: NextRequest) {
   const quantosCobertura = Number(searchParams.get('cobertura') || 0)
   if (quantosCobertura > 0) {
     const limiar = Number(searchParams.get('limiar') || LIMIAR_SEMELHANCA_PADRAO)
+    // Quantas fichas olhar por produto. Importa muito: a maioria das fichas devolve
+    // "No winners found" (existe, mas ninguém disputa ela no catálogo), e um mesmo
+    // produto costuma ter várias fichas. Este parâmetro é o que permite medir o
+    // ganho de olhar mais fundo antes de pagar o custo em tempo de varredura.
+    const quantasFichas = Math.min(Number(searchParams.get('fichas') || 3), 10)
     const produtos = await produtosPrioritarios(Math.min(quantosCobertura, 25))
     const linhas: any[] = []
     for (const p of produtos) {
       const consulta = montarConsulta(p.produto)
       try {
-        const fichas = await buscarProdutosCatalogo(accessToken, consulta, 3)
+        const fichas = await buscarProdutosCatalogo(accessToken, consulta, quantasFichas)
         const comSemelhanca = fichas.map(f => ({
+          ficha: f,
           id: f.id, nome: f.nome, semelhanca: Number(semelhanca(p.produto, f.nome).toFixed(3)),
         }))
-        const melhor = comSemelhanca[0]?.semelhanca ?? 0
-        let ofertas: number | null = null
-        if (fichas.length) {
+        const parecidas = comSemelhanca.filter(f => f.semelhanca >= limiar)
+        const melhor = comSemelhanca.reduce((m, f) => Math.max(m, f.semelhanca), 0)
+
+        let ofertas = 0
+        const detalhe: any[] = []
+        for (const f of parecidas) {
           await pausa(120)
-          ofertas = (await ofertasDoProduto(accessToken, fichas[0])).length
+          const n = (await ofertasDoProduto(accessToken, f.ficha)).length
+          ofertas += n
+          detalhe.push({ id: f.id, semelhanca: f.semelhanca, ofertas: n })
         }
+
         linhas.push({
           sku: p.sku, produto: p.produto, giro: p.giro, consulta,
-          fichas: comSemelhanca, ofertas,
+          fichas: comSemelhanca.map(f => ({ id: f.id, nome: f.nome, semelhanca: f.semelhanca })),
+          fichasParecidas: parecidas.length, detalhe, ofertas,
           veredito: !fichas.length ? 'catálogo não achou a ficha'
-            : melhor < limiar ? `ficha achada mas semelhança ${melhor} < ${limiar}`
+            : !parecidas.length ? `ficha achada mas semelhança ${melhor} < ${limiar}`
             : ofertas === 0 ? 'ficha certa, porém sem oferta ativa'
             : 'ok',
         })
