@@ -55,8 +55,11 @@ export async function GET(req: NextRequest) {
       const detalhe = j?.message || j?.error_description || j?.error || `HTTP ${res.status}`
       return html(pagina('Não foi possível obter o token', `
         <p class="erro">${String(detalhe).slice(0, 300)}</p>
-        <p class="nota">Causa mais comum: a URL de redirecionamento cadastrada na aplicação não bate com esta:</p>
+        <p class="nota">As duas causas mais comuns:</p>
+        <p class="nota"><strong>1.</strong> A URL de redirecionamento cadastrada na aplicação não é exatamente esta:</p>
         <p class="url">${redirectUri}</p>
+        <p class="nota"><strong>2.</strong> A opção <strong>PKCE</strong> está ligada na aplicação. Ela é opcional no
+        Mercado Livre e esta integração não a utiliza — desligue-a no DevCenter e tente de novo.</p>
         <a class="btn" href="/api/radar/oauth/start">Tentar de novo</a>`), 502)
     }
 

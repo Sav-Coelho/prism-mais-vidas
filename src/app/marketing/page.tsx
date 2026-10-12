@@ -223,10 +223,13 @@ export default function RadarPrecosPage() {
                 usar uma conta sua, e não a de vendedor da loja, mantém a conta principal do cliente fora da operação.
               </p>
               <ol style={{ margin: '0 0 8px', paddingLeft: 18 }}>
-                <li>Em <strong>developers.mercadolivre.com.br</strong>, criar uma aplicação. Na <em>URL de redirecionamento</em>, informar:
+                <li>Em <strong>developers.mercadolivre.com.br</strong> → <em>DevCenter</em> → <em>Criar aplicação</em>.
+                  Na <em>URL de redirecionamento</em>, informar:
                   <div style={{ background: 'var(--brave-dark)', color: 'var(--brave-yellow)', padding: '6px 10px', borderRadius: 6, margin: '5px 0', fontSize: 11.5, fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all' }}>
                     https://tio-chico-shop.vercel.app/api/radar/oauth/callback
                   </div>
+                  Marcar o escopo <strong>Leitura</strong> e deixar o <strong>PKCE desligado</strong> — é opcional no
+                  Mercado Livre e esta integração não o utiliza. Tópicos e URL de notificações ficam em branco.
                 </li>
                 <li>Na Vercel, em <em>Settings → Environment Variables</em>, cadastrar <code>ML_CLIENT_ID</code> (App ID),
                   <code>ML_CLIENT_SECRET</code> (Secret Key) e <code>ML_SELLER_NICKS</code> (apelido da loja no Mercado Livre, para excluir os anúncios dela).</li>
