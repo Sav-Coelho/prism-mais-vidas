@@ -48,6 +48,14 @@ export async function POST(req: NextRequest) {
   // Cria a varredura na primeira chamada; as seguintes continuam a mesma.
   let scanId = body.scanId
   if (!scanId) {
+    // Varredura em lotes depende de quem chamou voltar para o lote seguinte. Se a
+    // aba for fechada no meio, a anterior fica "em andamento" para sempre e o
+    // histórico passa a mentir. Começar uma nova é o momento certo de encerrar as
+    // que ficaram pelo caminho.
+    await prisma.radarScan.updateMany({
+      where: { status: 'rodando', startedAt: { lt: new Date(Date.now() - 15 * 60_000) } },
+      data: { status: 'interrompido', finishedAt: new Date() },
+    }).catch(() => {})
     const scan = await prisma.radarScan.create({ data: { status: 'rodando', origem: body.origem ?? 'manual' } })
     scanId = scan.id
   }
