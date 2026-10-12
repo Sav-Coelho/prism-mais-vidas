@@ -13,11 +13,15 @@
  * parâmetro, não constante mágica.
  *
  * ── Casamento de produto ─────────────────────────────────────────────────────
- * Buscar pelo título inteiro no Mercado Livre não funciona: os títulos são longos
- * e cheios de código de modelo. A busca usa os termos mais informativos e, depois,
- * cada anúncio devolvido é pontuado por semelhança de título (Jaccard, o mesmo
- * método do classificador de lançamentos). Abaixo do limiar, o anúncio é
- * descartado — melhor não comparar do que comparar com outro produto.
+ * A comparação é feita pelo CATÁLOGO do Mercado Livre: a consulta acha a página do
+ * produto e as ofertas listadas ali disputam exatamente o mesmo item. Todas as
+ * ofertas de um produto carregam o nome da ficha como título.
+ *
+ * Buscar pelo título inteiro não funciona: os títulos são longos e cheios de
+ * código de modelo. A consulta usa os termos mais informativos e, depois, a ficha
+ * encontrada é pontuada por semelhança (Jaccard, o mesmo método do classificador
+ * de lançamentos). Abaixo do limiar, descarta-se — melhor não comparar do que
+ * comparar com outro produto.
  */
 
 import { tokenize, jaccardSimilarity } from './classifier'

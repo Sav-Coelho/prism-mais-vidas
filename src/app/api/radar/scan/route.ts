@@ -135,12 +135,15 @@ export async function POST(req: NextRequest) {
   let i = offset
   let consultados = 0, semConcorrente = 0, criadas = 0, criticos = 0
   const falhas: string[] = []
+  // Apelidos de vendedor são reaproveitados entre produtos: os mesmos concorrentes
+  // reaparecem o tempo todo, e cada consulta repetida sairia do orçamento de tempo.
+  const cacheVendedores = new Map<string, string>()
 
   while (i < produtos.length && Date.now() - inicio < ORCAMENTO_MS) {
     const p = produtos[i]
     try {
       const consulta = montarConsulta(p.produto)
-      const brutas = await buscarOfertas(accessToken, consulta, 25)
+      const brutas = await buscarOfertas(accessToken, consulta, 25, cacheVendedores)
       const avaliadas = avaliarOfertas(p.preco, p.produto, brutas, {
         limiarCritico, limiarSemelhanca: LIMIAR_SEMELHANCA_PADRAO, apelidosProprios: cfg.sellerNicks,
       })
