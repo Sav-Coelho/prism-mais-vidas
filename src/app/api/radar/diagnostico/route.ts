@@ -163,15 +163,20 @@ export async function GET(req: NextRequest) {
           { headers: { Authorization: `Bearer ${accessToken}`, accept: 'application/json' } })
         const t3 = await r3.text().catch(() => '')
         let ofertas: any = t3.slice(0, 300)
+        let amostraCrua: any = null
         try {
           const j3 = JSON.parse(t3)
           const lista = Array.isArray(j3?.results) ? j3.results : Array.isArray(j3) ? j3 : []
+          // A primeira oferta inteira, sem recorte: é dela que saem os nomes de
+          // campo usados no radar. Como /items/{id} é proibido para anúncio de
+          // terceiro, esta resposta é a única fonte de dado do concorrente.
+          if (lista.length) amostraCrua = lista[0]
           if (lista.length) ofertas = lista.slice(0, 5).map((o: any) => ({
             itemId: o.item_id || o.id, preco: o.price, vendedorId: o.seller_id,
             frete: o.shipping?.free_shipping ?? null, vendidos: o.sold_quantity ?? null,
           }))
         } catch { /* corpo não-JSON fica como texto */ }
-        cadeia.etapas.push({ etapa: '3. ofertas do produto (concorrentes)', status: r3.status, ofertas })
+        cadeia.etapas.push({ etapa: '3. ofertas do produto (concorrentes)', status: r3.status, ofertas, amostraCrua })
         if (r3.ok && Array.isArray(ofertas) && ofertas.length) break
         await pausa(150)
       }
