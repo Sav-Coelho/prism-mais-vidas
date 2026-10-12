@@ -79,6 +79,7 @@ export default function RadarPrecosPage() {
           break
         }
         scanId = j.scanId; offset = j.offset; concluido = j.concluido
+        if (j.tokenTemporario && !aviso) setAviso({ tipo: 'info', texto: j.aviso })
         setProgresso({ feitos: j.offset, total: j.total })
         voltas++
       }

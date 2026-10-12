@@ -26,10 +26,10 @@ export async function GET(req: NextRequest) {
   auth.searchParams.set('response_type', 'code')
   auth.searchParams.set('client_id', clientId)
   auth.searchParams.set('redirect_uri', redirectUri)
-  // offline_access é o que faz o Mercado Livre devolver refresh_token. Sem pedi-lo
-  // explicitamente, a autorização conclui com HTTP 200 mas entrega apenas o token
-  // de 6 horas — e o radar semanal morreria na primeira renovação.
-  // `read` basta: o radar só faz GET de busca.
-  auth.searchParams.set('scope', 'offline_access read')
+  // Sem parâmetro `scope`: a documentação do Mercado Livre não o prevê na URL de
+  // autorização (só response_type, client_id, redirect_uri, state e os de PKCE).
+  // Os escopos — read, write e offline_access — vêm da configuração da aplicação
+  // no DevCenter. É lá que offline_access precisa estar marcado para que a troca
+  // devolva refresh_token.
   return NextResponse.redirect(auth.toString())
 }

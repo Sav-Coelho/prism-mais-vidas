@@ -75,10 +75,19 @@ export async function POST(req: NextRequest) {
 
   // O refresh_token do Mercado Livre é de uso único. O valor em uso fica no
   // Setting (gravado na renovação anterior); a env var é só a semente inicial.
-  const guardado = await prisma.setting.findUnique({ where: { key: 'ml_refresh_token' } }).catch(() => null)
+  const [guardado, accessGuardado, expiraGuardado] = await Promise.all([
+    prisma.setting.findUnique({ where: { key: 'ml_refresh_token' } }).catch(() => null),
+    prisma.setting.findUnique({ where: { key: 'ml_access_token' } }).catch(() => null),
+    prisma.setting.findUnique({ where: { key: 'ml_access_expira' } }).catch(() => null),
+  ])
   const refreshEmUso = guardado?.value || cfg.refreshToken
-  if (!refreshEmUso) {
-    // App cadastrado, mas ainda não autorizado: falta o clique de uma vez só.
+  // Token de 6h guardado na autorização: serve de ponte enquanto o escopo
+  // offline_access não está marcado no DevCenter. Margem de 2 min para não usar
+  // um token que expira no meio da varredura.
+  const accessAindaVale = accessGuardado?.value && Number(expiraGuardado?.value || 0) > Date.now() + 120_000
+    ? accessGuardado.value : null
+
+  if (!refreshEmUso && !accessAindaVale) {
     if (!body.scanId) {
       await prisma.radarScan.create({
         data: { status: 'sem_credencial', origem: body.origem ?? 'manual', finishedAt: new Date(),
@@ -92,22 +101,34 @@ export async function POST(req: NextRequest) {
   }
 
   let accessToken: string
-  try {
-    const tok = await obterAccessToken({ ...cfg, refreshToken: refreshEmUso })
-    accessToken = tok.accessToken
-    if (tok.novoRefreshToken && tok.novoRefreshToken !== refreshEmUso) {
-      await prisma.setting.upsert({
-        where: { key: 'ml_refresh_token' },
-        update: { value: tok.novoRefreshToken },
-        create: { key: 'ml_refresh_token', value: tok.novoRefreshToken },
-      }).catch(() => {})
+  let tokenTemporario = false
+  if (refreshEmUso) {
+    try {
+      const tok = await obterAccessToken({ ...cfg, refreshToken: refreshEmUso })
+      accessToken = tok.accessToken
+      if (tok.novoRefreshToken && tok.novoRefreshToken !== refreshEmUso) {
+        await prisma.setting.upsert({
+          where: { key: 'ml_refresh_token' },
+          update: { value: tok.novoRefreshToken },
+          create: { key: 'ml_refresh_token', value: tok.novoRefreshToken },
+        }).catch(() => {})
+      }
+    } catch (e: any) {
+      // Renovação falhou: se ainda houver token válido guardado, a varredura segue
+      // em vez de ser perdida — o problema de renovação é reportado ao final.
+      if (!accessAindaVale) {
+        await prisma.radarScan.update({
+          where: { id: scanId },
+          data: { status: 'erro', finishedAt: new Date(), erro: String(e?.message || e).slice(0, 400) },
+        }).catch(() => {})
+        return NextResponse.json({ erro: 'token', mensagem: String(e?.message || e) }, { status: 502 })
+      }
+      accessToken = accessAindaVale
+      tokenTemporario = true
     }
-  } catch (e: any) {
-    await prisma.radarScan.update({
-      where: { id: scanId },
-      data: { status: 'erro', finishedAt: new Date(), erro: String(e?.message || e).slice(0, 400) },
-    }).catch(() => {})
-    return NextResponse.json({ erro: 'token', mensagem: String(e?.message || e) }, { status: 502 })
+  } else {
+    accessToken = accessAindaVale!
+    tokenTemporario = true
   }
 
   const inicio = Date.now()
@@ -168,5 +189,8 @@ export async function POST(req: NextRequest) {
     nesteLote: { consultados, semConcorrente, ofertas: criadas, criticos },
     acumulado: { ofertas: agregado._count, criticos: criticosTotais },
     falhas,
+    // Avisa que a varredura rodou com o token de 6h, não com renovação automática:
+    // sem offline_access no DevCenter, a execução semanal não vai funcionar.
+    ...(tokenTemporario ? { tokenTemporario: true, aviso: 'Varredura feita com o token temporário de 6 horas. Marque o escopo offline_access no DevCenter e autorize de novo para que a execução semanal funcione.' } : {}),
   })
 }

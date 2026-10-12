@@ -52,18 +52,36 @@ export async function GET(req: NextRequest) {
     })
     const j = await res.json().catch(() => null)
 
+    // O access_token é guardado sempre que vier, mesmo sem refresh_token: vale 6
+    // horas e permite rodar a primeira varredura enquanto o offline_access é
+    // ajustado no DevCenter. Melhor entregar valor hoje do que travar tudo.
+    if (j?.access_token) {
+      const expira = Date.now() + (Number(j.expires_in) || 21600) * 1000
+      await prisma.setting.upsert({
+        where: { key: 'ml_access_token' }, update: { value: j.access_token },
+        create: { key: 'ml_access_token', value: j.access_token },
+      }).catch(() => {})
+      await prisma.setting.upsert({
+        where: { key: 'ml_access_expira' }, update: { value: String(expira) },
+        create: { key: 'ml_access_expira', value: String(expira) },
+      }).catch(() => {})
+    }
+
     // Caso específico e silencioso: o Mercado Livre aceitou tudo (HTTP 200, veio
-    // access_token) mas não devolveu refresh_token. Isso é falta do escopo
-    // offline_access, não problema de URL nem de PKCE — e a mensagem genérica
-    // mandaria a pessoa procurar no lugar errado.
+    // access_token) mas não devolveu refresh_token. É falta do escopo
+    // offline_access na APLICAÇÃO — a URL de autorização não controla isso.
     if (res.ok && j?.access_token && !j?.refresh_token) {
-      return html(pagina('Autorizado, mas sem token de renovação', `
-        <p class="erro">O Mercado Livre devolveu o token de acesso, porém sem <code>refresh_token</code>.</p>
-        <p>Isso acontece quando a autorização não inclui o escopo <code>offline_access</code> — sem ele o
-        acesso vale 6 horas e o radar semanal pararia na primeira renovação.</p>
-        <p class="nota">A URL de autorização já pede esse escopo. Confirme no DevCenter que a aplicação tem o
-        escopo de <strong>Leitura</strong> habilitado e autorize de novo.</p>
-        <a class="btn" href="/api/radar/oauth/start">Autorizar de novo</a>`), 502)
+      const concedidos = String(j.scope || '(não informado)')
+      return html(pagina('Falta o escopo offline_access', `
+        <p class="erro">A autorização funcionou, mas o Mercado Livre não devolveu <code>refresh_token</code>.</p>
+        <p>Escopos concedidos nesta autorização: <code>${concedidos}</code></p>
+        <p>O <code>offline_access</code> é um escopo <strong>da aplicação</strong> e precisa estar marcado no
+        DevCenter — não dá para pedi-lo pela URL. Vá em <em>Minhas aplicações → sua aplicação → Editar</em>,
+        marque <strong>offline_access</strong> junto com <strong>read</strong>, salve e autorize de novo.</p>
+        <p class="ok">O token de 6 horas foi guardado: já dá para rodar a primeira varredura agora, enquanto
+        você ajusta o escopo.</p>
+        <a class="btn" href="/marketing">Ir para o Radar e rodar agora</a>
+        <a class="btn" style="background:#edf2f4" href="/api/radar/oauth/start">Autorizar de novo</a>`), 502)
     }
 
     if (!res.ok || !j?.refresh_token) {
