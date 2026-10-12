@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { NextRequest, NextResponse } from 'next/server'
 import { lerConfig, obterAccessToken, buscarOfertas, pausa } from '@/lib/mercadolivre'
 import { montarConsulta, avaliarOfertas, LIMIAR_CRITICO_PADRAO, LIMIAR_SEMELHANCA_PADRAO } from '@/lib/radar'
+import { produtosPrioritarios } from '@/lib/radar-produtos'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -13,28 +14,6 @@ export const maxDuration = 60
 
 const ORCAMENTO_MS = 45_000        // folga sobre o maxDuration de 60s
 const PAUSA_ENTRE_CONSULTAS = 250  // educação com a API do Mercado Livre
-
-/** Ordena o catálogo pela relevância de venda: o radar olha primeiro o que gira. */
-async function produtosPrioritarios(limite: number) {
-  const [catalogo, vendas] = await Promise.all([
-    prisma.marginProduct.findMany({ where: { salePrice: { gt: 0 } } }),
-    prisma.salesRecord.findMany({ where: { month: 0, year: 0 } }),
-  ])
-  const vendidas = new Map<string, number>()
-  vendas.forEach(v => {
-    const k = String(v.sku || '').trim() || String(v.product || '').toLowerCase().trim()
-    if (k) vendidas.set(k, (vendidas.get(k) || 0) + v.quantity)
-  })
-  return catalogo
-    .map(p => ({
-      sku: p.sku,
-      produto: p.product,
-      preco: p.salePrice,
-      giro: vendidas.get(String(p.sku || '').trim() || String(p.product).toLowerCase().trim()) || 0,
-    }))
-    .sort((a, b) => b.giro - a.giro || b.preco - a.preco)
-    .slice(0, limite)
-}
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as {

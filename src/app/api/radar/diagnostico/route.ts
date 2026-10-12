@@ -1,6 +1,8 @@
 import { prisma } from '@/lib/prisma'
 import { NextRequest, NextResponse } from 'next/server'
-import { lerConfig, obterAccessToken, pausa } from '@/lib/mercadolivre'
+import { lerConfig, obterAccessToken, pausa, buscarProdutosCatalogo, ofertasDoProduto } from '@/lib/mercadolivre'
+import { produtosPrioritarios } from '@/lib/radar-produtos'
+import { montarConsulta, semelhanca, LIMIAR_SEMELHANCA_PADRAO } from '@/lib/radar'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -185,6 +187,56 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Cobertura: por que um produto fica "sem concorrente"? São três motivos bem
+  // diferentes — o catálogo não achou nada, achou outro produto (semelhança baixa)
+  // ou achou a ficha certa mas ninguém está vendendo. Sem separar os três não dá
+  // para calibrar o limiar de semelhança nem saber se o radar está medindo pouco.
+  let cobertura: any = null
+  const quantosCobertura = Number(searchParams.get('cobertura') || 0)
+  if (quantosCobertura > 0) {
+    const limiar = Number(searchParams.get('limiar') || LIMIAR_SEMELHANCA_PADRAO)
+    const produtos = await produtosPrioritarios(Math.min(quantosCobertura, 25))
+    const linhas: any[] = []
+    for (const p of produtos) {
+      const consulta = montarConsulta(p.produto)
+      try {
+        const fichas = await buscarProdutosCatalogo(accessToken, consulta, 3)
+        const comSemelhanca = fichas.map(f => ({
+          id: f.id, nome: f.nome, semelhanca: Number(semelhanca(p.produto, f.nome).toFixed(3)),
+        }))
+        const melhor = comSemelhanca[0]?.semelhanca ?? 0
+        let ofertas: number | null = null
+        if (fichas.length) {
+          await pausa(120)
+          ofertas = (await ofertasDoProduto(accessToken, fichas[0])).length
+        }
+        linhas.push({
+          sku: p.sku, produto: p.produto, giro: p.giro, consulta,
+          fichas: comSemelhanca, ofertas,
+          veredito: !fichas.length ? 'catálogo não achou a ficha'
+            : melhor < limiar ? `ficha achada mas semelhança ${melhor} < ${limiar}`
+            : ofertas === 0 ? 'ficha certa, porém sem oferta ativa'
+            : 'ok',
+        })
+      } catch (e: any) {
+        linhas.push({ sku: p.sku, produto: p.produto, consulta, erro: String(e?.message || e).slice(0, 150) })
+      }
+      await pausa(120)
+    }
+    const conta = (v: string) => linhas.filter(l => String(l.veredito || '').startsWith(v)).length
+    cobertura = {
+      limiarUsado: limiar,
+      total: linhas.length,
+      resumo: {
+        ok: conta('ok'),
+        semFicha: conta('catálogo não achou'),
+        semelhancaBaixa: conta('ficha achada mas semelhança'),
+        semOferta: conta('ficha certa'),
+      },
+      linhas,
+    }
+  }
+
   const abertos = sondas.filter(s => s.status >= 200 && s.status < 300).map(s => s.url)
   const fechados = sondas.filter(s => s.status === 401 || s.status === 403).map(s => `${s.url} → ${s.status}`)
 
@@ -195,5 +247,6 @@ export async function GET(req: NextRequest) {
     sondas,
     resumo: { abertos, fechados },
     ...(cadeia ? { cadeia } : {}),
+    ...(cobertura ? { cobertura } : {}),
   })
 }

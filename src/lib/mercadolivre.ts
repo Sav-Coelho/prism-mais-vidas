@@ -131,7 +131,12 @@ export async function buscarProdutosCatalogo(accessToken: string, consulta: stri
   const j = await mlGet(accessToken, `/products/search?site_id=MLB&status=active&q=${encodeURIComponent(consulta)}&limit=${Math.min(limite, 10)}`)
   const results: any[] = Array.isArray(j?.results) ? j.results : []
   return results
-    .map(p => ({ id: String(p.id || ''), nome: String(p.name || ''), permalink: String(p.permalink || '') }))
+    .map(p => {
+      const id = String(p.id || '')
+      // A busca de catálogo não devolve permalink; a página do produto é previsível
+      // a partir do id, e é para ela que o radar precisa mandar quem for conferir.
+      return { id, nome: String(p.name || ''), permalink: String(p.permalink || '') || (id ? `https://www.mercadolivre.com.br/p/${id}` : '') }
+    })
     .filter(p => p.id && p.nome)
 }
 
