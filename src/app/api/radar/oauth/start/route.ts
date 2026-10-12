@@ -28,8 +28,8 @@ export async function GET(req: NextRequest) {
   auth.searchParams.set('redirect_uri', redirectUri)
   // Sem parâmetro `scope`: a documentação do Mercado Livre não o prevê na URL de
   // autorização (só response_type, client_id, redirect_uri, state e os de PKCE).
-  // Os escopos — read, write e offline_access — vêm da configuração da aplicação
-  // no DevCenter. É lá que offline_access precisa estar marcado para que a troca
-  // devolva refresh_token.
+  // Os escopos vêm da aplicação. O formulário do DevCenter oferece apenas Leitura
+  // e Escrita — não há caixinha de `offline_access` para marcar, e é por isso que
+  // a troca pode voltar sem refresh_token. Nesse caso vale o token de 6 horas.
   return NextResponse.redirect(auth.toString())
 }

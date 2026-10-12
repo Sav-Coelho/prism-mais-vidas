@@ -67,21 +67,27 @@ export async function GET(req: NextRequest) {
       }).catch(() => {})
     }
 
-    // Caso específico e silencioso: o Mercado Livre aceitou tudo (HTTP 200, veio
-    // access_token) mas não devolveu refresh_token. É falta do escopo
-    // offline_access na APLICAÇÃO — a URL de autorização não controla isso.
+    // O Mercado Livre aceitou tudo (HTTP 200, veio access_token) mas não devolveu
+    // refresh_token. Sem ele não há renovação automática: o token vale 6 horas e
+    // depois é preciso repetir a autorização à mão.
+    //
+    // Não existe caixinha de `offline_access` para marcar: o formulário do
+    // DevCenter oferece só Leitura e Escrita. O acesso off-line é concedido pelo
+    // próprio Mercado Livre conforme o perfil da aplicação, e não há o que ajustar
+    // aqui — por isso esta tela não manda mais ninguém procurar essa opção.
     if (res.ok && j?.access_token && !j?.refresh_token) {
       const concedidos = String(j.scope || '(não informado)')
-      return html(pagina('Falta o escopo offline_access', `
-        <p class="erro">A autorização funcionou, mas o Mercado Livre não devolveu <code>refresh_token</code>.</p>
-        <p>Escopos concedidos nesta autorização: <code>${concedidos}</code></p>
-        <p>O <code>offline_access</code> é um escopo <strong>da aplicação</strong> e precisa estar marcado no
-        DevCenter — não dá para pedi-lo pela URL. Vá em <em>Minhas aplicações → sua aplicação → Editar</em>,
-        marque <strong>offline_access</strong> junto com <strong>read</strong>, salve e autorize de novo.</p>
-        <p class="ok">O token de 6 horas foi guardado: já dá para rodar a primeira varredura agora, enquanto
-        você ajusta o escopo.</p>
+      return html(pagina('Conectado por 6 horas', `
+        <p class="ok">A autorização funcionou e o token foi guardado. Dá para rodar a varredura agora.</p>
+        <p class="erro">O Mercado Livre não devolveu <code>refresh_token</code>, então este acesso
+        <strong>expira em 6 horas</strong> e a execução semanal automática não vai funcionar sozinha.</p>
+        <p>Escopos concedidos: <code>${concedidos}</code></p>
+        <p class="nota">Não há o que corrigir no DevCenter: o formulário da aplicação só oferece
+        <strong>Leitura</strong> e <strong>Escrita</strong>. O acesso off-line (que gera o
+        <code>refresh_token</code>) é liberado pelo próprio Mercado Livre conforme o perfil da aplicação.
+        Enquanto não vier, basta repetir esta autorização quando o radar avisar que o acesso venceu.</p>
         <a class="btn" href="/marketing">Ir para o Radar e rodar agora</a>
-        <a class="btn" style="background:#edf2f4" href="/api/radar/oauth/start">Autorizar de novo</a>`), 502)
+        <a class="btn" style="background:#edf2f4" href="/api/radar/oauth/start">Autorizar de novo</a>`))
     }
 
     if (!res.ok || !j?.refresh_token) {

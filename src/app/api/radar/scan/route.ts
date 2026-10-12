@@ -81,9 +81,9 @@ export async function POST(req: NextRequest) {
     prisma.setting.findUnique({ where: { key: 'ml_access_expira' } }).catch(() => null),
   ])
   const refreshEmUso = guardado?.value || cfg.refreshToken
-  // Token de 6h guardado na autorização: serve de ponte enquanto o escopo
-  // offline_access não está marcado no DevCenter. Margem de 2 min para não usar
-  // um token que expira no meio da varredura.
+  // Token de 6h guardado na autorização: serve de ponte quando o Mercado Livre
+  // não devolve refresh_token. Margem de 2 min para não usar um token que expira
+  // no meio da varredura.
   const accessAindaVale = accessGuardado?.value && Number(expiraGuardado?.value || 0) > Date.now() + 120_000
     ? accessGuardado.value : null
 
@@ -189,8 +189,9 @@ export async function POST(req: NextRequest) {
     nesteLote: { consultados, semConcorrente, ofertas: criadas, criticos },
     acumulado: { ofertas: agregado._count, criticos: criticosTotais },
     falhas,
-    // Avisa que a varredura rodou com o token de 6h, não com renovação automática:
-    // sem offline_access no DevCenter, a execução semanal não vai funcionar.
-    ...(tokenTemporario ? { tokenTemporario: true, aviso: 'Varredura feita com o token temporário de 6 horas. Marque o escopo offline_access no DevCenter e autorize de novo para que a execução semanal funcione.' } : {}),
+    // Avisa que a varredura rodou com o token de 6h, não com renovação automática.
+    // Sem refresh_token a execução semanal não roda sozinha — e não há ajuste a
+    // fazer no DevCenter, que só oferece Leitura e Escrita.
+    ...(tokenTemporario ? { tokenTemporario: true, aviso: 'Varredura feita com o token temporário de 6 horas. Sem refresh_token a execução semanal não roda sozinha: refaça a autorização quando o acesso vencer.' } : {}),
   })
 }
