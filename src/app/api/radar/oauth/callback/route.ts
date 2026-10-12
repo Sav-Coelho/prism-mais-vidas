@@ -51,6 +51,21 @@ export async function GET(req: NextRequest) {
       }),
     })
     const j = await res.json().catch(() => null)
+
+    // Caso específico e silencioso: o Mercado Livre aceitou tudo (HTTP 200, veio
+    // access_token) mas não devolveu refresh_token. Isso é falta do escopo
+    // offline_access, não problema de URL nem de PKCE — e a mensagem genérica
+    // mandaria a pessoa procurar no lugar errado.
+    if (res.ok && j?.access_token && !j?.refresh_token) {
+      return html(pagina('Autorizado, mas sem token de renovação', `
+        <p class="erro">O Mercado Livre devolveu o token de acesso, porém sem <code>refresh_token</code>.</p>
+        <p>Isso acontece quando a autorização não inclui o escopo <code>offline_access</code> — sem ele o
+        acesso vale 6 horas e o radar semanal pararia na primeira renovação.</p>
+        <p class="nota">A URL de autorização já pede esse escopo. Confirme no DevCenter que a aplicação tem o
+        escopo de <strong>Leitura</strong> habilitado e autorize de novo.</p>
+        <a class="btn" href="/api/radar/oauth/start">Autorizar de novo</a>`), 502)
+    }
+
     if (!res.ok || !j?.refresh_token) {
       const detalhe = j?.message || j?.error_description || j?.error || `HTTP ${res.status}`
       return html(pagina('Não foi possível obter o token', `
