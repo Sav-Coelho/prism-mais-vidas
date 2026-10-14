@@ -45,8 +45,12 @@ export async function GET(req: NextRequest) {
   const q = searchParams.get('q') || 'lanterna'
   const nick = searchParams.get('nick') || (process.env.ML_SELLER_NICKS || 'tiochicoshop').split(',')[0].trim()
 
+  // Marcador de deploy em TODA resposta, inclusive nas de erro: é justamente
+  // quando algo não responde que se precisa saber qual código está no ar.
+  const commit = (process.env.VERCEL_GIT_COMMIT_SHA || 'local').slice(0, 7)
+
   const cfg = lerConfig()
-  if (!cfg) return NextResponse.json({ erro: 'Sem ML_CLIENT_ID/ML_CLIENT_SECRET na Vercel.' }, { status: 428 })
+  if (!cfg) return NextResponse.json({ commit, erro: 'Sem ML_CLIENT_ID/ML_CLIENT_SECRET na Vercel.' }, { status: 428 })
 
   const [guardado, accessGuardado, expiraGuardado] = await Promise.all([
     prisma.setting.findUnique({ where: { key: 'ml_refresh_token' } }).catch(() => null),
@@ -65,11 +69,12 @@ export async function GET(req: NextRequest) {
       accessToken = tok.accessToken
       origemToken = 'renovado pelo refresh_token'
     } catch (e: any) {
-      return NextResponse.json({ erro: 'Não foi possível obter token', detalhe: String(e?.message || e) }, { status: 502 })
+      return NextResponse.json({ commit, erro: 'Não foi possível obter token', detalhe: String(e?.message || e) }, { status: 502 })
     }
   }
   if (!accessToken) {
     return NextResponse.json({
+      commit,
       erro: 'sem_autorizacao',
       mensagem: 'Nenhum token válido. Abra /api/radar/oauth/start para autorizar.',
       expirouEm: expiraEm ? new Date(expiraEm).toISOString() : null,
@@ -254,10 +259,7 @@ export async function GET(req: NextRequest) {
   const fechados = sondas.filter(s => s.status === 401 || s.status === 403).map(s => `${s.url} → ${s.status}`)
 
   return NextResponse.json({
-    // Qual código está realmente no ar. Build quebrado na Vercel mantém a versão
-    // anterior servindo em silêncio, e sem este marcador a gente testa a mudança
-    // nova contra o código velho e conclui errado — já aconteceu duas vezes.
-    commit: (process.env.VERCEL_GIT_COMMIT_SHA || 'local').slice(0, 7),
+    commit,
     origemToken,
     tokenExpiraEm: expiraEm ? new Date(expiraEm).toISOString() : null,
     temRefreshToken: Boolean(refreshEmUso),

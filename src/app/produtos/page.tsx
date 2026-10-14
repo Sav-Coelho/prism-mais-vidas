@@ -753,7 +753,7 @@ export default function ProdutosPage() {
                 Crítico = alguém vendendo {Math.round(LIMIAR_CRITICO_PADRAO * 100)}% ou mais abaixo do nosso preço.
                 A comparação usa o preço da tabela, então simular um preço novo muda esta seção na hora.
               </div>
-              <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
+              <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 0 }}>
                 <Metric label="Com concorrente mapeado" value={String(mercadoResumo.comConcorrente)}
                   hint={`${mercadoResumo.ofertas} anúncios de concorrentes`} />
                 <Metric label="Sendo cortados" value={String(mercadoResumo.criticos)}
