@@ -7,6 +7,7 @@ import {
   type ABCItem, type ABCClass, type StockStatus, type StockStatusItem,
 } from '@/lib/abc'
 import { calcMargem, dreVarRate, type MargemOverride } from '@/lib/margem'
+import { classificarSeveridade, SEVERIDADE_META, LIMIAR_CRITICO_PADRAO, type Severidade } from '@/lib/radar'
 import {
   ComposedChart, BarChart, ScatterChart, Bar, Line, Scatter, XAxis, YAxis, Tooltip,
   ReferenceLine, ReferenceArea, ResponsiveContainer, CartesianGrid, Cell,
@@ -18,6 +19,11 @@ import {
 // Cruzadas por SKU num só relatório: Curva ABC, situação do estoque e margem.
 // A única referência mensal é a DRE mais recente, de onde saem as despesas
 // variáveis (% do preço) e os custos fixos (só para o PEO por produto).
+//
+// A quarta base é só de LEITURA: a última varredura do Radar de Preços, que traz o
+// concorrente mais barato de cada produto no Mercado Livre. Ela entra aqui porque a
+// decisão de preço precisa das quatro coisas juntas — o que vende, o que está
+// parado, quanto sobra e por quanto o vizinho vende.
 
 const fmtBRL = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
@@ -40,9 +46,19 @@ const PERIODO_KEY = 'prism.produtos.periodoVendasDias'
 const LIMITES_KEY = 'prism.abc.limitesCobertura'
 
 type Fonte = 'vendas' | 'estoque' | 'catalogo'
-type Filtro = 'todos' | StockStatus | 'parados' | 'mcNeg' | 'classeA' | 'semCatalogo'
-type Ordem = 'vendas' | 'valorEst' | 'mcPct' | 'cobertura' | 'mcPeriodo'
+type Filtro = 'todos' | StockStatus | 'parados' | 'mcNeg' | 'classeA' | 'semCatalogo' | 'mercado'
+type Ordem = 'vendas' | 'valorEst' | 'mcPct' | 'cobertura' | 'mcPeriodo' | 'mercado'
 type MatrixRow = { key: string; classe: string; n: number; total: number } & Record<string, number | string>
+
+/** O que o Radar de Preços sabe sobre este produto no Mercado Livre. */
+interface Mercado {
+  menorPreco: number
+  vendedor: string
+  concorrentes: number
+  link: string
+  divergencia: number        // recalculada contra o preço ATUAL da linha
+  severidade: Severidade
+}
 
 interface Row {
   key: string; label: string; sku: string | null; category: string | null
@@ -52,6 +68,7 @@ interface Row {
   inCatalog: boolean; basePrice: number; baseCost: number; price: number; cost: number; edited: boolean
   despVarUnit: number; mcUnit: number | null; mcPct: number | null; markup: number | null; peoUn: number | null
   mcPeriodo: number | null
+  mercado: Mercado | null
 }
 
 const joinKey = (r: any) => String(r.sku || '').trim() || String(r.product || '').toLowerCase().trim()
@@ -95,6 +112,7 @@ export default function ProdutosPage() {
   const [stock, setStock] = useState<any[]>([])
   const [catalog, setCatalog] = useState<any[]>([])
   const [dre, setDre] = useState<any>(null)
+  const [radar, setRadar] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
   const [uploading, setUploading] = useState<Fonte | null>(null)
@@ -141,15 +159,19 @@ export default function ProdutosPage() {
       fetch(`/api/abc/estoque${unitQ}`).then(safeList),
       fetch(`/api/margem${unitQ}`).then(safeList),
       fetchLatestDre(unitAmp),
-    ]).then(([s, e, c, d]) => {
+      // Radar de Preços: a última varredura concluída. O radar não é por unidade —
+      // o concorrente no Mercado Livre é o mesmo, venda de onde vier.
+      fetch('/api/radar').then(r => (r.ok ? r.json().catch(() => null) : null)).catch(() => null),
+    ]).then(([s, e, c, d, rad]) => {
       if (seq !== loadSeq.current) return
       setSales(Array.isArray(s) ? s : [])
       setStock(Array.isArray(e) ? e : [])
       setCatalog(Array.isArray(c) ? c : [])
       setDre(d)
+      setRadar(rad && Array.isArray(rad.ofertas) ? rad : null)
     }).catch(() => {
       if (seq !== loadSeq.current) return
-      setSales([]); setStock([]); setCatalog([]); setDre(null)
+      setSales([]); setStock([]); setCatalog([]); setDre(null); setRadar(null)
     }).finally(() => {
       if (seq !== loadSeq.current) return
       setLoading(false)
@@ -250,6 +272,26 @@ export default function ProdutosPage() {
   const simCount = Object.keys(overrides).length
 
   // ── Linhas do relatório único: união de vendas ∪ estoque ∪ catálogo ────────
+  // Concorrente mais barato de cada produto na última varredura do radar.
+  // Guarda só o menor preço: é ele que define se estamos sendo cortados, e é o
+  // número que a pessoa precisa ver sem abrir outra aba.
+  const mercadoBruto = useMemo(() => {
+    const m = new Map<string, { menorPreco: number; vendedor: string; concorrentes: number; link: string; nossoPrecoNaVarredura: number }>()
+    const ofertas: any[] = Array.isArray(radar?.ofertas) ? radar.ofertas : []
+    ofertas.forEach(o => {
+      const k = String(o.sku || '').trim() || String(o.produto || '').toLowerCase().trim()
+      if (!k || !(o.preco > 0)) return
+      const at = m.get(k)
+      if (!at) {
+        m.set(k, { menorPreco: o.preco, vendedor: o.vendedor, concorrentes: 1, link: o.permalink || '', nossoPrecoNaVarredura: o.nossoPreco })
+        return
+      }
+      at.concorrentes++
+      if (o.preco < at.menorPreco) { at.menorPreco = o.preco; at.vendedor = o.vendedor; at.link = o.permalink || at.link }
+    })
+    return m
+  }, [radar])
+
   const rows = useMemo(() => {
     const pctBy = new Map<string, number>()
     abcVendas.rows.forEach(r => pctBy.set(r.key, r.pct))
@@ -260,6 +302,7 @@ export default function ProdutosPage() {
       estoque: i.estoque, valorEst: i.valor, custoEst: i.custo, cobertura: i.cobertura, status: i.status, parado: i.parado,
       inCatalog: false, basePrice: 0, baseCost: 0, price: 0, cost: 0, edited: false,
       despVarUnit: 0, mcUnit: null, mcPct: null, markup: null, peoUn: null, mcPeriodo: null,
+      mercado: null,
     }))
     margem.forEach(m => {
       const ex = map.get(m.key)
@@ -269,6 +312,7 @@ export default function ProdutosPage() {
         estoque: 0, valorEst: 0, custoEst: 0, cobertura: null, status: null, parado: false,
         inCatalog: false, basePrice: 0, baseCost: 0, price: 0, cost: 0, edited: false,
         despVarUnit: 0, mcUnit: null, mcPct: null, markup: null, peoUn: null, mcPeriodo: null,
+        mercado: null,
       }
       map.set(m.key, {
         ...base, inCatalog: true,
@@ -277,8 +321,25 @@ export default function ProdutosPage() {
         mcPeriodo: base.vendas > 0 ? m.mcUnit * base.vendas : null,
       })
     })
-    return Array.from(map.values())
-  }, [situacao, margem, abcVendas])
+
+    // A divergência é recalculada contra o preço ATUAL da linha, não contra o que
+    // o radar gravou na varredura. Assim, simular um preço novo na tabela mostra
+    // na hora como a loja ficaria diante do concorrente — que é a pergunta real.
+    return Array.from(map.values()).map(r => {
+      const m = mercadoBruto.get(r.key)
+      if (!m) return r
+      const nosso = r.price > 0 ? r.price : m.nossoPrecoNaVarredura
+      if (!(nosso > 0)) return r
+      const divergencia = (nosso - m.menorPreco) / nosso
+      return {
+        ...r,
+        mercado: {
+          menorPreco: m.menorPreco, vendedor: m.vendedor, concorrentes: m.concorrentes, link: m.link,
+          divergencia, severidade: classificarSeveridade(divergencia, LIMIAR_CRITICO_PADRAO),
+        },
+      }
+    })
+  }, [situacao, margem, abcVendas, mercadoBruto])
 
   const resumo = useMemo(() => {
     const vendidos = rows.filter(r => r.vendas > 0).length
@@ -293,12 +354,38 @@ export default function ProdutosPage() {
     return { vendidos, emEstoque, mcMedia, negativos, mcGerada, semCatalogo, piores }
   }, [rows])
 
+  /**
+   * Cruzamento que a aba não tinha: quem está sendo cortado no preço E quanto esse
+   * produto pesa. Um concorrente 30% mais barato num item classe C é ruído; no item
+   * que gera a maior parte da margem, é o problema do mês.
+   */
+  const mercadoResumo = useMemo(() => {
+    const comConcorrente = rows.filter(r => r.mercado)
+    const criticos = comConcorrente.filter(r => r.mercado!.severidade === 'critico')
+    const maisBaratos = comConcorrente.filter(r => r.mercado!.divergencia < 0)
+    const mcExposta = criticos.reduce((a, r) => a + (r.mcPeriodo || 0), 0)
+    const corteMedio = criticos.length
+      ? criticos.reduce((a, r) => a + r.mercado!.divergencia, 0) / criticos.length : 0
+    const lista = criticos.slice().sort((a, b) =>
+      (b.mcPeriodo ?? 0) - (a.mcPeriodo ?? 0) || b.mercado!.divergencia - a.mercado!.divergencia)
+    const varreduraEm = radar?.scan?.finishedAt || radar?.scan?.startedAt || null
+    return {
+      comConcorrente: comConcorrente.length,
+      criticos: criticos.length,
+      criticosClasseA: criticos.filter(r => r.abcClass === 'A').length,
+      maisBaratos: maisBaratos.length,
+      mcExposta, corteMedio, lista, varreduraEm,
+      ofertas: Array.isArray(radar?.ofertas) ? radar.ofertas.length : 0,
+    }
+  }, [rows, radar])
+
   const tableRows = useMemo(() => {
     let list = rows
     if (filtro === 'parados') list = list.filter(r => r.parado)
     else if (filtro === 'mcNeg') list = list.filter(r => (r.mcUnit ?? 0) < 0 && r.inCatalog)
     else if (filtro === 'classeA') list = list.filter(r => r.abcClass === 'A')
     else if (filtro === 'semCatalogo') list = list.filter(r => !r.inCatalog)
+    else if (filtro === 'mercado') list = list.filter(r => r.mercado?.severidade === 'critico')
     else if (filtro !== 'todos') list = list.filter(r => r.status === filtro)
     const cmp: Record<Ordem, (a: Row, b: Row) => number> = {
       vendas: (a, b) => b.vendas - a.vendas,
@@ -306,6 +393,8 @@ export default function ProdutosPage() {
       mcPct: (a, b) => (a.mcPct ?? Infinity) - (b.mcPct ?? Infinity),
       cobertura: (a, b) => (a.cobertura ?? Infinity) - (b.cobertura ?? Infinity),
       mcPeriodo: (a, b) => (b.mcPeriodo ?? -Infinity) - (a.mcPeriodo ?? -Infinity),
+      // Sem concorrente mapeado vai para o fim: não é "alinhado", é desconhecido.
+      mercado: (a, b) => (b.mercado?.divergencia ?? -Infinity) - (a.mercado?.divergencia ?? -Infinity),
     }
     const byStatusThen = (a: Row, b: Row) => {
       if (filtro === 'todos' && a.status && b.status && a.status !== b.status) return STATUS_PRIO[a.status] - STATUS_PRIO[b.status]
@@ -347,7 +436,7 @@ export default function ProdutosPage() {
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">Produtos</h1>
-          <p className="page-subtitle">Curva ABC · situação do estoque · margem de contribuição — relatório único por SKU; cada envio substitui o anterior</p>
+          <p className="page-subtitle">Curva ABC · situação do estoque · margem de contribuição · preço diante do mercado — relatório único por SKU; cada envio substitui o anterior</p>
         </div>
         <div className="flex gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
           <select className="form-select" style={{ width: 150 }} value={unitId} onChange={e => setUnitId(e.target.value)}>
@@ -651,6 +740,87 @@ export default function ProdutosPage() {
             </div>
           )}
 
+          {/* ── Preço diante do mercado (dados do Radar de Preços) ── */}
+          {mercadoResumo.comConcorrente > 0 && (
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 2 }}>
+                <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14 }}>Preço diante do mercado</div>
+                <a href="/marketing" style={{ fontSize: 11, color: 'var(--brave-gray)' }}>ver Radar de Preços →</a>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12, lineHeight: 1.5 }}>
+                Concorrente mais barato de cada produto no Mercado Livre, da última varredura
+                {mercadoResumo.varreduraEm ? ` (${new Date(mercadoResumo.varreduraEm).toLocaleDateString('pt-BR')})` : ''}.
+                Crítico = alguém vendendo {Math.round(LIMIAR_CRITICO_PADRAO * 100)}% ou mais abaixo do nosso preço.
+                A comparação usa o preço da tabela, então simular um preço novo muda esta seção na hora.
+              </div>
+              <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
+                <Metric label="Com concorrente mapeado" value={String(mercadoResumo.comConcorrente)}
+                  hint={`${mercadoResumo.ofertas} anúncios de concorrentes`} />
+                <Metric label="Sendo cortados" value={String(mercadoResumo.criticos)}
+                  color={mercadoResumo.criticos > 0 ? CRITICAL : undefined}
+                  hint={mercadoResumo.criticos > 0 ? `corte médio de ${pctStr(mercadoResumo.corteMedio)}` : 'ninguém abaixo do limiar'} />
+                <Metric label="Críticos na classe A" value={String(mercadoResumo.criticosClasseA)}
+                  color={mercadoResumo.criticosClasseA > 0 ? CRITICAL : undefined}
+                  hint="os que mais pesam no faturamento" />
+                <Metric label="MC exposta no período" value={hasSales && dre ? fmtBRL(mercadoResumo.mcExposta) : '—'}
+                  hint={hasSales ? `margem gerada pelos produtos cortados em ${periodoDias} dias` : 'importe as vendas'} />
+              </div>
+
+              {mercadoResumo.lista.length > 0 && (
+                <div className="table-wrap" style={{ marginTop: 14 }}>
+                  <table style={{ fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th>Produto sendo cortado</th>
+                        <th style={{ textAlign: 'center' }}>Classe</th>
+                        <th style={{ textAlign: 'right' }}>Nosso preço</th>
+                        <th style={{ textAlign: 'right' }}>Mais barato</th>
+                        <th style={{ textAlign: 'right' }}>Corte</th>
+                        <th style={{ textAlign: 'right' }}>MC/un</th>
+                        <th style={{ textAlign: 'right' }}>MC no período</th>
+                        <th>Concorrente</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mercadoResumo.lista.slice(0, 10).map(r => (
+                        <tr key={r.key}>
+                          <td style={{ fontSize: 13, minWidth: 200 }}>
+                            {r.label}
+                            <div style={{ fontSize: 10, color: 'var(--brave-gray)' }}>{r.sku || '—'}</div>
+                          </td>
+                          <td style={{ textAlign: 'center' }}>{r.abcClass ? <ClassBadge c={r.abcClass} /> : <span style={{ color: 'var(--brave-gray)' }}>—</span>}</td>
+                          <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.price > 0 ? fmtBRL(r.price) : '—'}</td>
+                          <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtBRL(r.mercado!.menorPreco)}</td>
+                          <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: CRITICAL }}>
+                            −{(r.mercado!.divergencia * 100).toFixed(0)}%
+                          </td>
+                          <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.mcUnit == null ? '—' : fmtBRL(r.mcUnit)}</td>
+                          <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{r.mcPeriodo == null ? '—' : fmtBRL(r.mcPeriodo)}</td>
+                          <td style={{ color: 'var(--brave-gray-mid)' }}>
+                            {r.mercado!.link
+                              ? <a href={r.mercado!.link} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>{r.mercado!.vendedor}</a>
+                              : r.mercado!.vendedor}
+                            {r.mercado!.concorrentes > 1 && <span style={{ fontSize: 10 }}> +{r.mercado!.concorrentes - 1}</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {mercadoResumo.lista.length > 10 && (
+                    <div style={{ fontSize: 11, color: 'var(--brave-gray)', padding: '8px 2px' }}>
+                      e mais {mercadoResumo.lista.length - 10} — use o filtro “Concorrente ≥20% abaixo” na tabela.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 10, lineHeight: 1.5 }}>
+                Produto sem concorrente mapeado aparece com “—”: quer dizer que ninguém disputa a ficha dele no
+                catálogo do Mercado Livre — que é onde o radar enxerga —, não que não exista concorrência.
+              </div>
+            </div>
+          )}
+
           {/* ── Tabela única ── */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--brave-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -669,6 +839,7 @@ export default function ProdutosPage() {
                   <option value="cobertura">Ordenar: menor cobertura</option>
                   <option value="mcPct">Ordenar: menor MC%</option>
                   <option value="mcPeriodo">Ordenar: maior MC gerada</option>
+                  <option value="mercado">Ordenar: maior corte do concorrente</option>
                 </select>
               </div>
             </div>
@@ -682,6 +853,9 @@ export default function ProdutosPage() {
                 { k: 'parados', label: '⏸ Sem venda' },
                 { k: 'mcNeg', label: '− MC negativa' },
                 { k: 'semCatalogo', label: 'Sem catálogo' },
+                ...(mercadoResumo.comConcorrente > 0
+                  ? [{ k: 'mercado' as Filtro, label: `${SEVERIDADE_META.critico.icone} Concorrente ≥20% abaixo` }]
+                  : []),
               ] as { k: Filtro; label: string }[]).map(f => (
                 <button key={f.k} onClick={() => setFiltro(f.k)} className="btn btn-sm" style={{
                   background: filtro === f.k ? 'var(--brave-dark)' : 'var(--brave-light)',
@@ -700,6 +874,7 @@ export default function ProdutosPage() {
                     <th style={{ textAlign: 'right' }}>Cobertura</th>
                     <th>Situação</th>
                     <th style={{ textAlign: 'right' }}>Preço</th>
+                    <th style={{ textAlign: 'right' }}>Mercado (ML)</th>
                     <th style={{ textAlign: 'right' }}>Custo rep.</th>
                     <th style={{ textAlign: 'right' }}>MC/un</th>
                     <th style={{ textAlign: 'right' }}>MC%</th>
@@ -731,6 +906,7 @@ export default function ProdutosPage() {
                         </td>
                         <td>{r.status ? <StatusChip status={r.status} parado={r.parado} /> : <span style={{ color: 'var(--brave-gray)' }}>—</span>}</td>
                         <td style={{ textAlign: 'right' }}>{r.inCatalog ? priceInput(r, 'price') : <span style={{ color: 'var(--brave-gray)' }}>—</span>}</td>
+                        <td style={{ textAlign: 'right', minWidth: 118 }}><MercadoCell m={r.mercado} /></td>
                         <td style={{ textAlign: 'right' }}>{r.inCatalog ? priceInput(r, 'cost') : <span style={{ color: 'var(--brave-gray)' }}>—</span>}</td>
                         <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: neg ? CRITICAL : INK }}>{r.mcUnit == null ? '—' : fmtBRL(r.mcUnit)}</td>
                         <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: neg ? CRITICAL : INK }}>{r.mcPct == null ? '—' : pctStr(r.mcPct)}</td>
@@ -770,6 +946,35 @@ function Metric({ label, value, hint, color }: { label: string; value: string; h
 
 function Swatch({ color }: { color: string }) {
   return <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: color, verticalAlign: 'middle' }} />
+}
+
+/**
+ * Posição do produto diante do concorrente mais barato do Mercado Livre.
+ *
+ * Mostra o preço dele e o quanto isso nos corta. Traço quando o radar não achou
+ * concorrente: isso NÃO quer dizer que não existe — quer dizer que ninguém disputa
+ * aquela ficha no catálogo do Mercado Livre, que é onde o radar consegue enxergar.
+ */
+function MercadoCell({ m }: { m: Mercado | null }) {
+  if (!m) return <span style={{ color: 'var(--brave-gray)' }}>—</span>
+  const meta = SEVERIDADE_META[m.severidade]
+  const corpo = (
+    <>
+      <div style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{fmtBRL(m.menorPreco)}</div>
+      <div style={{ fontSize: 10, color: meta.cor, fontWeight: 700 }}>
+        {meta.icone} {m.divergencia >= 0 ? '−' : '+'}{Math.abs(m.divergencia * 100).toFixed(0)}%
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--brave-gray)' }}>
+        {m.vendedor}{m.concorrentes > 1 ? ` +${m.concorrentes - 1}` : ''}
+      </div>
+    </>
+  )
+  if (!m.link) return <div>{corpo}</div>
+  return (
+    <a href={m.link} target="_blank" rel="noopener noreferrer"
+      title={`${m.concorrentes} ${m.concorrentes === 1 ? 'concorrente' : 'concorrentes'} — abrir no Mercado Livre`}
+      style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>{corpo}</a>
+  )
 }
 
 function ClassBadge({ c }: { c: ABCClass }) {
