@@ -372,7 +372,8 @@ function NumeroBR({ valor, onChange, largura, placeholder, negrito }: {
   valor: number | null; onChange: (v: number | null) => void
   largura: number; placeholder?: string; negrito?: boolean
 }) {
-  const formatar = (v: number | null) => (v === null || !isFinite(v) ? '' : String(Math.round(v * 100) / 100).replace('.', ','))
+  // Com separador de milhar ("183.773"): lerNumeroBR lê de volta o mesmo número.
+  const formatar = (v: number | null) => (v === null || !isFinite(v) ? '' : v.toLocaleString('pt-BR', { maximumFractionDigits: 2 }))
   const [texto, setTexto] = useState(formatar(valor))
   const editando = useRef(false)
   useEffect(() => { if (!editando.current) setTexto(formatar(valor)) }, [valor])
