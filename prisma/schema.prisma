@@ -300,3 +300,22 @@ model RadarOffer {
   @@index([scanId])
   @@index([severidade])
 }
+
+// Venda do Mercado Livre com a data em que o Mercado Pago libera o dinheiro
+// (relatório "Vendas a receber"). É o que dá ao Fluxo de Caixa a data REAL de
+// cada entrada. Chave = número da transação do Mercado Pago: reenviar um relatório
+// que se sobrepõe ao anterior atualiza o status (aprovada → reembolsada) sem duplicar.
+model RecebivelML {
+  id        String   @id
+  compra    String              // AAAA-MM-DD da compra
+  liberacao String?             // AAAA-MM-DD da liberação do dinheiro
+  status    String              // approved | refunded | cancelled | rejected | in_mediation…
+  bruto     Float               // valor do produto
+  liquido   Float               // valor total recebido (sem tarifas, frete e parcelamento)
+  sku       String?
+  pedido    String?             // número da venda no Mercado Livre
+  updatedAt DateTime @updatedAt
+
+  @@index([liberacao])
+  @@index([compra])
+}

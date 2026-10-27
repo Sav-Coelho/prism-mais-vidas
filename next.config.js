@@ -6,5 +6,9 @@ const nextConfig = {
     config.resolve.alias = { ...config.resolve.alias, canvas: false }
     return config
   },
+  // A aba "Fluxo Projetado" virou "Fluxo de Caixa"; o endereço antigo continua valendo.
+  async redirects() {
+    return [{ source: '/fluxo-projetado', destination: '/fluxo-caixa', permanent: false }]
+  },
 }
 module.exports = nextConfig
